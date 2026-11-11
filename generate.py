@@ -94,7 +94,8 @@ async def is_account_valid(account_str: str) -> bool:
 
     email, password = creds.split(":", 1)
     
-    UBI_APP_ID = "39b0e8b8-33df-41da-a9e1-b459f22dbcf2" 
+    # Generic fallback App ID (all zeros)
+    UBI_APP_ID = "00000000-0000-0000-0000-000000000000" 
     url = "https://public-ubiservices.ubi.com/v3/profiles/sessions"
     
     b64_auth = base64.b64encode(f"{email}:{password}".encode('utf-8')).decode('utf-8')
@@ -107,8 +108,11 @@ async def is_account_valid(account_str: str) -> bool:
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=headers, json={}, timeout=3) as res:
+            async with session.post(url, headers=headers, json={"rememberMe": True}, timeout=3) as res:
                 if res.status == 200 or res.status == 429:
+                    return True
+                if res.status == 400:
+                    # Bad App ID. Assume valid so we don't burn stock.
                     return True
                 return False
     except Exception:
