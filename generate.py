@@ -88,14 +88,12 @@ def parse_account(raw) -> dict:
 
 async def is_account_valid(account_str: str) -> bool:
     """Hits Ubisoft's API to check if the account is actually alive."""
-    # Extract just the email:pass part
     creds = account_str.split("|")[0].strip()
     if ":" not in creds:
         return False
 
     email, password = creds.split(":", 1)
     
-    # Public Ubisoft App ID
     UBI_APP_ID = "39b0e8b8-33df-41da-a9e1-b459f22dbcf2" 
     url = "https://public-ubiservices.ubi.com/v3/profiles/sessions"
     
@@ -109,16 +107,11 @@ async def is_account_valid(account_str: str) -> bool:
 
     try:
         async with aiohttp.ClientSession() as session:
-            # Timeout is set to 3 seconds so we don't hang if Ubisoft is slow
             async with session.post(url, headers=headers, json={}, timeout=3) as res:
-                # 200 = Success. 
-                # 429 = Rate Limited (Ubisoft is blocking us). We count it as "valid" 
-                # so we don't accidentally burn a good account just because we're being throttled.
                 if res.status == 200 or res.status == 429:
                     return True
                 return False
     except Exception:
-        # If network fails, assume valid to prevent wiping stock.
         return True 
 
 class Generate(commands.Cog):
@@ -181,7 +174,6 @@ class Generate(commands.Cog):
                 description=f"**{CATEGORY_LABELS[category]}** accounts are currently out of stock.")
             return await interaction.followup.send(embeds=[embed])
 
-        # ── Open DM ────────────────────────────────────────────────────────────
         try:
             status_msg = await interaction.user.send("⏳ **Processing Your Account** • Verifying stock...")
         except discord.Forbidden:
@@ -189,7 +181,6 @@ class Generate(commands.Cog):
                 description=f"<@{interaction.user.id}> your DMs are closed. Please enable them.")
             return await interaction.followup.send(embeds=[embed])
 
-        # ── LIVE FILTER LOOP ───────────────────────────────────────────────────
         raw = None
         valid_found = False
         tried_count = 0
@@ -199,12 +190,11 @@ class Generate(commands.Cog):
             while not valid_found:
                 raw = db.pop_stock(category)
                 if not raw:
-                    break # Ran out of stock while looping
+                    break 
                 
                 tried_count += 1
                 if await is_account_valid(raw):
-                    valid_found = True # Found a working one!
-                # If invalid, it silently loops and tries the next account
+                    valid_found = True 
                 
             if not valid_found or not raw:
                 await status_msg.edit(
@@ -214,14 +204,10 @@ class Generate(commands.Cog):
                     description=f"**{CATEGORY_LABELS[category]}** just sold out.")
                 return await interaction.followup.send(embeds=[embed])
 
-            # ── Record cooldown ────────────────────────────────────────────────
             db.update_user(str(interaction.user.id), {f"last_gen_{cat_key}": now, "last_gen": now})
             left = db.stock_count(category)
-
-            # ── Parse account ──────────────────────────────────────────────────
             parsed = parse_account(raw)
             
-            # ── Banner ─────────────────────────────────────────────────────────
             gen_image   = db.get_config("gen_image", "")
             banner_file = db.get_banner_file_info() if str(gen_image).startswith("local:") else None
             banner_url = f"attachment://{banner_file['name']}" if banner_file else (gen_image if gen_image.startswith("http") else None)
@@ -231,7 +217,6 @@ class Generate(commands.Cog):
             stock_cap     = max(20, left)
             stock_bar     = utils.progress_bar(left, stock_cap)
 
-            # ── Channel Embed ──────────────────────────────────────────────────
             channel_embed = discord.Embed(color=color, title=f"✨ {CATEGORY_LABELS[category]} Account Claimed ✨",
                 description=f"<@{interaction.user.id}> just generated an account! Check your DMs 📬")
             channel_embed.set_author(name=interaction.guild.name, icon_url=guild_icon)
@@ -241,7 +226,6 @@ class Generate(commands.Cog):
             channel_embed.timestamp = discord.utils.utcnow()
             if banner_url: channel_embed.set_image(url=banner_url)
 
-            # ── DM Embed ───────────────────────────────────────────────────────
             dm_description = "\n".join(parsed["detail_lines"]) if parsed["detail_lines"] else "\u200b"
             title = f"🎁✨ Account Delivered — {parsed['username'] or CATEGORY_LABELS[category]} ✨🎁"
 
@@ -261,7 +245,6 @@ class Generate(commands.Cog):
             dm_embed.add_field(name="📦 Tier Stock Remaining", value=f"`{stock_bar}` {left} left", inline=False)
             if banner_url: dm_embed.set_image(url=banner_url)
 
-            # ── Buttons ────────────────────────────────────────────────────────
             buttons = [discord.ui.Button(label="Copy Email:Pass", style=discord.ButtonStyle.primary, custom_id="copy_creds", emoji="📋")]
             if parsed["skin_link"]:
                 buttons.append(discord.ui.Button(label="Copy Skin Link", style=discord.ButtonStyle.link, url=parsed["skin_link"], emoji="🎨"))
@@ -271,7 +254,6 @@ class Generate(commands.Cog):
             view = discord.ui.View(timeout=None)
             for btn in buttons[:5]: view.add_item(btn)
 
-            # ── Send DM cascade ────────────────────────────────────────────────
             await asyncio.sleep(1.0)
             await status_msg.edit(content="✅ **Account Verified!** Details below 👇")
 
@@ -292,7 +274,6 @@ class Generate(commands.Cog):
                 db.log_generate(str(interaction.user.id), category, raw)
                 await interaction.followup.send(**channel_payload)
             except Exception:
-                # Restore stock if DM fails
                 db.restore_stock(category, raw)
                 db.update_user(str(interaction.user.id), {f"last_gen_{cat_key}": last_gen, "last_gen": user.get("last_gen", 0)})
                 await status_msg.edit(content="⚠️ Couldn't deliver your account (DMs closed). It was returned to stock.")
@@ -301,8 +282,11 @@ class Generate(commands.Cog):
             print(f"[generate] Error: {e}")
             if raw:
                 db.restore_stock(category, raw)
-                class GenerateButtonHandler(commands.Cog):
+
+
+class GenerateButtonHandler(commands.Cog):
     """Handles persistent button interactions from generate embeds."""
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
@@ -321,8 +305,13 @@ class Generate(commands.Cog):
                         creds = (field.value or "").strip("`").strip()
                         break
             if not creds:
-                return await interaction.response.send_message("❌ Could not find credentials on this message.", ephemeral=True)
-            await interaction.response.send_message(f"📋 **Tap and hold to copy:**\n```{creds}```", ephemeral=True)
+                return await interaction.response.send_message(
+                    "❌ Could not find credentials on this message.", ephemeral=True
+                )
+            await interaction.response.send_message(
+                f"📋 **Tap and hold (or triple-click) to copy:**\n```{creds}```",
+                ephemeral=True,
+            )
 
         elif custom_id == "how_to_link":
             embed = discord.Embed(
@@ -332,10 +321,11 @@ class Generate(commands.Cog):
                     "**1.** Open the platform login page.",
                     "**2.** Sign in with the **email** and **password** above.",
                     "**3.** Complete any 2FA prompts.",
-                    "**4.** Tap **Copy Skin Link** to preview inventory.",
+                    "**4.** Tap **Copy Skin Link** to preview the account inventory.",
                 ]),
             ).set_footer(text="Generator")
             await interaction.response.send_message(embeds=[embed], ephemeral=True)
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Generate(bot))
