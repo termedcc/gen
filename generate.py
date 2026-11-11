@@ -301,3 +301,42 @@ class Generate(commands.Cog):
             print(f"[generate] Error: {e}")
             if raw:
                 db.restore_stock(category, raw)
+                class GenerateButtonHandler(commands.Cog):
+    """Handles persistent button interactions from generate embeds."""
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    @commands.Cog.listener()
+    async def on_interaction(self, interaction: discord.Interaction):
+        if interaction.type != discord.InteractionType.component:
+            return
+        custom_id = interaction.data.get("custom_id", "")
+
+        if custom_id == "copy_creds":
+            embed = interaction.message.embeds[0] if interaction.message and interaction.message.embeds else None
+            creds = ""
+            if embed:
+                for field in embed.fields:
+                    if "Login Credentials" in (field.name or ""):
+                        creds = (field.value or "").strip("`").strip()
+                        break
+            if not creds:
+                return await interaction.response.send_message("❌ Could not find credentials on this message.", ephemeral=True)
+            await interaction.response.send_message(f"📋 **Tap and hold to copy:**\n```{creds}```", ephemeral=True)
+
+        elif custom_id == "how_to_link":
+            embed = discord.Embed(
+                color=0x5865F2,
+                title="❓ How to Link Your Account",
+                description="\n".join([
+                    "**1.** Open the platform login page.",
+                    "**2.** Sign in with the **email** and **password** above.",
+                    "**3.** Complete any 2FA prompts.",
+                    "**4.** Tap **Copy Skin Link** to preview inventory.",
+                ]),
+            ).set_footer(text="Generator")
+            await interaction.response.send_message(embeds=[embed], ephemeral=True)
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(Generate(bot))
+    await bot.add_cog(GenerateButtonHandler(bot))
