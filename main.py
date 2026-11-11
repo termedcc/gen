@@ -81,6 +81,7 @@ COGS = [
     "utility",
     "ai",
     "checker",
+    "links",
     
 ]
 
