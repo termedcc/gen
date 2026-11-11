@@ -94,8 +94,8 @@ async def is_account_valid(account_str: str) -> bool:
 
     email, password = creds.split(":", 1)
     
-    # Generic fallback App ID (all zeros)
-    UBI_APP_ID = "00000000-0000-0000-0000-000000000000" 
+    # New active App ID
+    UBI_APP_ID = "314d4fef-e568-454a-ae06-43e3bece12a6" 
     url = "https://public-ubiservices.ubi.com/v3/profiles/sessions"
     
     b64_auth = base64.b64encode(f"{email}:{password}".encode('utf-8')).decode('utf-8')
@@ -103,18 +103,19 @@ async def is_account_valid(account_str: str) -> bool:
         "Content-Type": "application/json",
         "Ubi-AppId": UBI_APP_ID,
         "Authorization": f"Basic {b64_auth}",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=headers, json={"rememberMe": True}, timeout=3) as res:
-                if res.status == 200 or res.status == 429:
+            async with session.post(url, headers=headers, json={"rememberMe": True}, timeout=4) as res:
+                if res.status == 200:
                     return True
-                if res.status == 400:
-                    # Bad App ID. Assume valid so we don't burn stock.
-                    return True
-                return False
+                if res.status == 401:
+                    return False
+                # 400 = bad app id, 429 = rate limit, 403 = forbidden
+                # we assume valid so we don't wipe stock on a network error
+                return True 
     except Exception:
         return True 
 
