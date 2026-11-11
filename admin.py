@@ -298,10 +298,7 @@ class Admin(commands.Cog):
         ).set_footer(text="Generator")
         await interaction.response.send_message(embeds=[embed], ephemeral=True)
 
-    # /setimage — mirrors setimage.js exactly:
-    #   attachment only  → download & store locally (never expires)
-    #   url only         → store URL directly (warns about expiry)
-    #   neither          → clear the banner
+    # /setimage
     @app_commands.command(name="setimage",
                           description="[Owner] Set the banner image shown in generate embeds.")
     @app_commands.describe(
@@ -315,7 +312,6 @@ class Admin(commands.Cog):
             return
         await interaction.response.defer(ephemeral=True)
 
-        # 1) Uploaded file — download & store locally
         if image:
             ct = image.content_type or ""
             if not ct.startswith("image/"):
@@ -348,7 +344,6 @@ class Admin(commands.Cog):
             embed.timestamp = discord.utils.utcnow()
             return await interaction.followup.send(embeds=[embed], files=[file], ephemeral=True)
 
-        # 2) URL provided — store directly
         if url and url.strip():
             url = url.strip()
             db.clear_banner()
@@ -365,7 +360,6 @@ class Admin(commands.Cog):
             embed.timestamp = discord.utils.utcnow()
             return await interaction.followup.send(embeds=[embed], ephemeral=True)
 
-        # 3) Neither provided — clear the banner
         db.clear_banner()
         db.set_config("gen_image", "")
         embed = discord.Embed(
@@ -375,7 +369,6 @@ class Admin(commands.Cog):
         embed.timestamp = discord.utils.utcnow()
         await interaction.followup.send(embeds=[embed], ephemeral=True)
 
-    # Keep /setbanner as a convenience alias that just calls /setimage logic
     @app_commands.command(name="setbanner",
                           description="[Owner] Upload a banner image (alias of /setimage).")
     @app_commands.describe(attachment="Image file (PNG/JPG/GIF/WEBP)")
@@ -614,6 +607,15 @@ class Admin(commands.Cog):
             await interaction.followup.send(embeds=[embed], ephemeral=True)
         except Exception as exc:
             await interaction.followup.send(f"❌ Could not create invite: {exc}", ephemeral=True)
+
+    # /setchecklog — set the channel for /check logs
+    @app_commands.command(name="setchecklog", description="[Owner] Set the channel for /check logs.")
+    @app_commands.describe(channel="Channel to send check logs to")
+    async def setchecklog(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        if not await utils.owner_only(interaction):
+            return
+        db.set_config("check_log_channel", str(channel.id))
+        await interaction.response.send_message(f"✅ Check logs will now go to {channel.mention}.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot):
