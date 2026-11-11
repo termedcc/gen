@@ -80,6 +80,7 @@ COGS = [
     "blacklist",
     "utility",
     "ai",
+    "checker",
     
 ]
 
