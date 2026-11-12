@@ -55,7 +55,7 @@ class Links(commands.Cog):
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, data=data, proxy=proxy) as res:
                     if res.status != 200:
-                        return await interaction.followup.send("❌ Failed to contact Microsoft.", ephemeral=True)
+                        return await interaction.followup.send("❌ Failed to contact Microsoft. Proxy might be dead.", ephemeral=True)
                     
                     auth_data = await res.json()
                     user_code = auth_data["user_code"]
@@ -82,7 +82,7 @@ class Links(commands.Cog):
                         "device_code": device_code
                     }
 
-                    for _ in range(60): # Wait up to 5 minutes
+                    for _ in range(60):
                         await asyncio.sleep(interval)
                         async with session.post(token_url, data=token_data, proxy=proxy) as token_res:
                             if token_res.status == 200:
@@ -106,8 +106,12 @@ class Links(commands.Cog):
         console="Xbox or PlayStation", 
         ubi_email="Ubisoft Email", 
         ubi_pass="Ubisoft Password",
-        console_cred="For Xbox: your Microsoft email:pass. For PS: your NPSSO cookie."
+        console_cred="Xbox: email:pass | PS: NPSSO token"
     )
+    @app_commands.choices(console=[
+        app_commands.Choice(name="Xbox", value="xbox"),
+        app_commands.Choice(name="PlayStation", value="ps"),
+    ])
     async def link(self, interaction: discord.Interaction, key: str, console: str, ubi_email: str, ubi_pass: str, console_cred: str):
         await interaction.response.defer(ephemeral=True)
         
@@ -120,48 +124,35 @@ class Links(commands.Cog):
             del keys[key]
         db.set_config("link_keys", keys)
         
-        await interaction.followup.send("⏳ **Starting Link Process...**\nYou will receive a DM shortly if 2FA is required.", ephemeral=True)
+        await interaction.followup.send("⏳ **Starting Link Process...**\nThis may take up to 2 minutes. Check your DMs.", ephemeral=True)
         
         proxies = self.load_proxies()
         proxy = random.choice(proxies) if proxies else None
 
         try:
             async with async_playwright() as p:
-                # Launch with stealth arguments and proxy
-                launch_args = [
-                    "--disable-blink-features=AutomationControlled",
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox"
-                ]
-                
+                launch_args = ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
                 launch_kwargs = {"headless": True, "args": launch_args}
+                
                 if proxy:
-                    # Playwright requires proxy split into server, username, password
-                    # Assuming format http://user:pass@ip:port
                     if "@" in proxy:
                         auth, server = proxy.split("@")
                         protocol, auth = auth.split("//")
                         user, pwd = auth.split(":")
-                        launch_kwargs["proxy"] = {
-                            "server": f"{protocol}://{server}",
-                            "username": user,
-                            "password": pwd
-                        }
+                        launch_kwargs["proxy"] = {"server": f"{protocol}://{server}", "username": user, "password": pwd}
                     else:
                         launch_kwargs["proxy"] = {"server": proxy}
 
                 browser = await p.chromium.launch(**launch_kwargs)
-                
                 context = await browser.new_context(
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    viewport={"width": 1920, "height": 1080}
                 )
                 page = await context.new_page()
                 await page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
                 
-                # Login to Ubisoft
+                # 1. Login to Ubisoft
                 await page.goto("https://account.ubisoft.com/en-US/login", timeout=30000)
-                await page.wait_for_selector('input[name="email"]', timeout=10000)
+                await page.wait_for_selector('input[name="email"]', timeout=15000)
                 await page.fill('input[name="email"]', ubi_email)
                 await page.fill('input[name="password"]', ubi_pass)
                 await page.click('button[type="submit"]')
@@ -171,13 +162,75 @@ class Links(commands.Cog):
                     await browser.close()
                     return await interaction.user.send("❌ Failed to log in. Wrong password or 2FA required on Ubisoft account.")
 
-                # Go to linking page
+                # 2. Go to Linking Page
                 await page.goto("https://account.ubisoft.com/en-US/account-linking", timeout=15000)
                 await page.wait_for_timeout(3000)
-                
+
+                # 3. Click the Link Button based on Console
+                if console == "xbox":
+                    try:
+                        # Ubisoft's Xbox link button
+                        await page.click('button[data-testid="link-xbox"]', timeout=5000)
+                    except:
+                        await browser.close()
+                        return await interaction.user.send("❌ Could not find the Xbox Link button on the page.")
+
+                    # Wait for Microsoft Popup
+                    async with context.expect_page() as new_page_info:
+                        pass
+                    ms_page = await new_page_info.value
+                    await ms_page.wait_for_load_state()
+
+                    ms_email, ms_pass = console_cred.split(":", 1)
+                    await ms_page.fill('input[type="email"]', ms_email)
+                    await ms_page.click('input[type="submit"]')
+                    await ms_page.wait_for_timeout(2000)
+                    await ms_page.fill('input[type="password"]', ms_pass)
+                    await ms_page.click('input[type="submit"]')
+                    await ms_page.wait_for_timeout(5000)
+                    
+                    if "identity/conditionalaccess" in ms_page.url or "proofs" in ms_page.url:
+                        await interaction.user.send("🛑 **2FA Required.** Microsoft sent a code. Reply here with the code.")
+                        
+                        def check(m):
+                            return m.author.id == interaction.user.id and m.channel.id == interaction.user.dm_channel.id
+                        
+                        try:
+                            msg = await self.bot.wait_for('message', timeout=120.0, check=check)
+                            await ms_page.fill('input[type="text"]', msg.content)
+                            await ms_page.click('input[type="submit"]')
+                            await ms_page.wait_for_timeout(5000)
+                        except asyncio.TimeoutError:
+                            await browser.close()
+                            return await interaction.user.send("❌ Timed out waiting for 2FA code.")
+
+                    await page.wait_for_url("**/account-linking**", timeout=15000)
+                    await interaction.user.send("✅ **Success!** Your Xbox account has been linked.")
+
+                elif console == "ps":
+                    try:
+                        await page.click('button[data-testid="link-ps"]', timeout=5000)
+                    except:
+                        await browser.close()
+                        return await interaction.user.send("❌ Could not find the PS Link button.")
+
+                    # PlayStation popup
+                    async with context.expect_page() as new_page_info:
+                        pass
+                    ps_page = await new_page_info.value
+                    await ps_page.wait_for_load_state()
+                    
+                    # Sony's login page
+                    await ps_page.wait_for_selector('input[name="username"]', timeout=15000)
+                    await ps_page.fill('input[name="username"]', console_cred) # User inputs NPSSO here
+                    await ps_page.click('button[type="submit"]')
+                    await ps_page.wait_for_timeout(5000)
+                    
+                    await page.wait_for_url("**/account-linking**", timeout=15000)
+                    await interaction.user.send("✅ **Success!** Your PlayStation account has been linked.")
+
                 await browser.close()
-                await interaction.user.send("✅ Ubisoft login successful. Manual linking may be required due to Microsoft/Sony iframes.")
-                
+
         except Exception as e:
             await interaction.user.send(f"❌ Failed to link: `{str(e)}`")
 
