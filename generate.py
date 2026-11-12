@@ -1,5 +1,5 @@
 """
-generate.py — /generate command with LIVE Ubisoft account checking.
+generate.py — /generate command (Sends accounts without filtering).
 """
 
 import asyncio
@@ -28,7 +28,6 @@ def _category_color(category: str) -> int:
     return _DEFAULT_COLORS.get(category, 0x5865F2)
 
 def parse_account(raw) -> dict:
-    """Parse a pipe-delimited account string."""
     if not isinstance(raw, str):
         if isinstance(raw, dict):
             raw = raw.get("credentials") or raw.get("account") or raw.get("data") \
@@ -86,45 +85,6 @@ def parse_account(raw) -> dict:
         "detail_lines": detail_lines,
         "currency_fields": currency_fields,
     }
-
-async def is_account_valid(account_str: str) -> bool:
-    """Hits Ubisoft's API to check if the account is actually alive."""
-    creds = account_str.split("|")[0].strip()
-    if ":" not in creds:
-        return False
-
-    email, password = creds.split(":", 1)
-    
-    UBI_APP_ID = "314d4fef-e568-454a-ae06-43e3bece12a6" 
-    url = "https://public-ubiservices.ubi.com/v3/profiles/sessions"
-    
-    b64_auth = base64.b64encode(f"{email}:{password}".encode('utf-8')).decode('utf-8')
-    
-    headers = {
-        "Content-Type": "application/json",
-        "Ubi-AppId": UBI_APP_ID,
-        "Authorization": f"Basic {b64_auth}",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "application/json",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Origin": "https://account.ubisoft.com",
-        "Referer": "https://account.ubisoft.com/"
-    }
-
-    try:
-        await asyncio.sleep(random.uniform(1.5, 3.5)) 
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=headers, json={"rememberMe": True}, timeout=8) as res:
-                if res.status == 200:
-                    return True
-                if res.status == 401:
-                    return False
-                if res.status == 403:
-                    return True 
-                return True 
-    except Exception:
-        return True 
 
 class Generate(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -187,118 +147,94 @@ class Generate(commands.Cog):
             return await interaction.followup.send(embeds=[embed])
 
         try:
-            status_msg = await interaction.user.send("⏳ **Processing Your Account** • Verifying stock...")
+            status_msg = await interaction.user.send("⏳ **Processing Your Account**...")
         except discord.Forbidden:
             embed = discord.Embed(color=0xFEE75C, title="⚠️ Could Not Send DM",
                 description=f"<@{interaction.user.id}> your DMs are closed. Please enable them.")
             return await interaction.followup.send(embeds=[embed])
 
-        raw = None
-        valid_found = False
-        tried_count = 0
+        raw = db.pop_stock(category)
+        if not raw:
+             embed = discord.Embed(color=0xED4245, title="❌ Out of Stock",
+                description=f"**{CATEGORY_LABELS[category]}** accounts are currently out of stock.")
+             return await interaction.followup.send(embeds=[embed])
+
+        db.update_user(str(interaction.user.id), {f"last_gen_{cat_key}": now, "last_gen": now})
+        left = db.stock_count(category)
+        parsed = parse_account(raw)
+        
+        gen_image   = db.get_config("gen_image", "")
+        banner_file = db.get_banner_file_info() if str(gen_image).startswith("local:") else None
+        banner_url = f"attachment://{banner_file['name']}" if banner_file else (gen_image if gen_image.startswith("http") else None)
+
+        color         = _category_color(category)
+        guild_icon    = interaction.guild.icon.url if interaction.guild.icon else None
+        stock_cap     = max(20, left)
+        stock_bar     = utils.progress_bar(left, stock_cap)
+
+        channel_embed = discord.Embed(color=color, title=f"✨ {CATEGORY_LABELS[category]} Account Claimed ✨",
+            description=f"<@{interaction.user.id}> just generated an account! Check your DMs 📬")
+        channel_embed.set_author(name=interaction.guild.name, icon_url=guild_icon)
+        channel_embed.set_thumbnail(url=interaction.user.display_avatar.url)
+        channel_embed.add_field(name="📦 Stock Remaining", value=f"`{stock_bar}` {left} left", inline=False)
+        channel_embed.set_footer(text="Generator • Use /generate to claim your own")
+        channel_embed.timestamp = discord.utils.utcnow()
+        if banner_url: channel_embed.set_image(url=banner_url)
+
+        dm_description = "\n".join(parsed["detail_lines"]) if parsed["detail_lines"] else "\u200b"
+        title = f"🎁✨ Account Delivered — {parsed['username'] or CATEGORY_LABELS[category]} ✨🎁"
+
+        dm_embed = discord.Embed(color=color, title=title, description=dm_description)
+        dm_embed.set_author(name=f"{interaction.guild.name} ✨ {CATEGORY_LABELS[category].upper()}", icon_url=guild_icon)
+        dm_embed.set_thumbnail(url=guild_icon)
+        dm_embed.set_footer(text="Generator • Do NOT share your credentials")
+        dm_embed.timestamp = discord.utils.utcnow()
+
+        for field in parsed["currency_fields"][:3]:
+            dm_embed.add_field(name=field["name"], value=field["value"], inline=field["inline"])
+
+        dm_embed.add_field(name="🔑 Login Credentials", value=f"```{parsed['credentials']}```", inline=False)
+        dm_embed.add_field(name="", value="━━━━━━━━━━━━━━━━━━", inline=False)
+        if parsed["skin_link"]:
+            dm_embed.add_field(name="🎨 Skin Link", value=parsed["skin_link"], inline=False)
+        dm_embed.add_field(name="📦 Tier Stock Remaining", value=f"`{stock_bar}` {left} left", inline=False)
+        if banner_url: dm_embed.set_image(url=banner_url)
+
+        buttons = [discord.ui.Button(label="Copy Email:Pass", style=discord.ButtonStyle.primary, custom_id="copy_creds", emoji="📋")]
+        if parsed["skin_link"]:
+            buttons.append(discord.ui.Button(label="Copy Skin Link", style=discord.ButtonStyle.link, url=parsed["skin_link"], emoji="🎨"))
+        buttons.append(discord.ui.Button(label="How to Link", style=discord.ButtonStyle.secondary, custom_id="how_to_link", emoji="❓"))
+        buttons.append(discord.ui.Button(label="Upgrade Premium", style=discord.ButtonStyle.link, url=f"https://discord.com/channels/{interaction.guild_id}", emoji="⬆️"))
+
+        view = discord.ui.View(timeout=None)
+        for btn in buttons[:5]: view.add_item(btn)
+
+        await asyncio.sleep(1.0)
+        await status_msg.edit(content="✅ **Account Ready!** Details below 👇")
+
+        dm_payload = {"embeds": [dm_embed], "view": view}
+        channel_payload = {"embeds": [channel_embed]}
+
+        if banner_file:
+            try:
+                dm_file = discord.File(banner_file["path"], filename=banner_file["name"])
+                ch_file = discord.File(banner_file["path"], filename=banner_file["name"])
+                dm_payload["files"] = [dm_file]
+                channel_payload["files"] = [ch_file]
+            except Exception:
+                pass
 
         try:
-            await status_msg.edit(content="🔄 **Verifying Account...**")
-            while not valid_found:
-                raw = db.pop_stock(category)
-                if not raw:
-                    break 
-                
-                tried_count += 1
-                if await is_account_valid(raw):
-                    valid_found = True 
-                
-            if not valid_found or not raw:
-                await status_msg.edit(
-                    content=f"❌ **{CATEGORY_LABELS[category]}** is out of stock (cleaned {tried_count} dead accounts)."
-                )
-                embed = discord.Embed(color=0xED4245, title="❌ Out of Stock",
-                    description=f"**{CATEGORY_LABELS[category]}** just sold out.")
-                return await interaction.followup.send(embeds=[embed])
-
-            db.update_user(str(interaction.user.id), {f"last_gen_{cat_key}": now, "last_gen": now})
-            left = db.stock_count(category)
-            parsed = parse_account(raw)
-            
-            gen_image   = db.get_config("gen_image", "")
-            banner_file = db.get_banner_file_info() if str(gen_image).startswith("local:") else None
-            banner_url = f"attachment://{banner_file['name']}" if banner_file else (gen_image if gen_image.startswith("http") else None)
-
-            color         = _category_color(category)
-            guild_icon    = interaction.guild.icon.url if interaction.guild.icon else None
-            stock_cap     = max(20, left)
-            stock_bar     = utils.progress_bar(left, stock_cap)
-
-            channel_embed = discord.Embed(color=color, title=f"✨ {CATEGORY_LABELS[category]} Account Claimed ✨",
-                description=f"<@{interaction.user.id}> just generated an account! Check your DMs 📬")
-            channel_embed.set_author(name=interaction.guild.name, icon_url=guild_icon)
-            channel_embed.set_thumbnail(url=interaction.user.display_avatar.url)
-            channel_embed.add_field(name="📦 Stock Remaining", value=f"`{stock_bar}` {left} left", inline=False)
-            channel_embed.set_footer(text="Generator • Use /generate to claim your own")
-            channel_embed.timestamp = discord.utils.utcnow()
-            if banner_url: channel_embed.set_image(url=banner_url)
-
-            dm_description = "\n".join(parsed["detail_lines"]) if parsed["detail_lines"] else "\u200b"
-            title = f"🎁✨ Account Delivered — {parsed['username'] or CATEGORY_LABELS[category]} ✨🎁"
-
-            dm_embed = discord.Embed(color=color, title=title, description=dm_description)
-            dm_embed.set_author(name=f"{interaction.guild.name} ✨ {CATEGORY_LABELS[category].upper()}", icon_url=guild_icon)
-            dm_embed.set_thumbnail(url=guild_icon)
-            dm_embed.set_footer(text="Generator • Do NOT share your credentials")
-            dm_embed.timestamp = discord.utils.utcnow()
-
-            for field in parsed["currency_fields"][:3]:
-                dm_embed.add_field(name=field["name"], value=field["value"], inline=field["inline"])
-
-            dm_embed.add_field(name="🔑 Login Credentials", value=f"```{parsed['credentials']}```", inline=False)
-            dm_embed.add_field(name="", value="━━━━━━━━━━━━━━━━━━", inline=False)
-            if parsed["skin_link"]:
-                dm_embed.add_field(name="🎨 Skin Link", value=parsed["skin_link"], inline=False)
-            dm_embed.add_field(name="📦 Tier Stock Remaining", value=f"`{stock_bar}` {left} left", inline=False)
-            if banner_url: dm_embed.set_image(url=banner_url)
-
-            buttons = [discord.ui.Button(label="Copy Email:Pass", style=discord.ButtonStyle.primary, custom_id="copy_creds", emoji="📋")]
-            if parsed["skin_link"]:
-                buttons.append(discord.ui.Button(label="Copy Skin Link", style=discord.ButtonStyle.link, url=parsed["skin_link"], emoji="🎨"))
-            buttons.append(discord.ui.Button(label="How to Link", style=discord.ButtonStyle.secondary, custom_id="how_to_link", emoji="❓"))
-            buttons.append(discord.ui.Button(label="Upgrade Premium", style=discord.ButtonStyle.link, url=f"https://discord.com/channels/{interaction.guild_id}", emoji="⬆️"))
-
-            view = discord.ui.View(timeout=None)
-            for btn in buttons[:5]: view.add_item(btn)
-
-            await asyncio.sleep(1.0)
-            await status_msg.edit(content="✅ **Account Verified!** Details below 👇")
-
-            dm_payload = {"embeds": [dm_embed], "view": view}
-            channel_payload = {"embeds": [channel_embed]}
-
-            if banner_file:
-                try:
-                    dm_file = discord.File(banner_file["path"], filename=banner_file["name"])
-                    ch_file = discord.File(banner_file["path"], filename=banner_file["name"])
-                    dm_payload["files"] = [dm_file]
-                    channel_payload["files"] = [ch_file]
-                except Exception:
-                    pass
-
-            try:
-                await interaction.user.send(**dm_payload)
-                db.log_generate(str(interaction.user.id), category, raw)
-                await interaction.followup.send(**channel_payload)
-            except Exception:
-                db.restore_stock(category, raw)
-                db.update_user(str(interaction.user.id), {f"last_gen_{cat_key}": last_gen, "last_gen": user.get("last_gen", 0)})
-                await status_msg.edit(content="⚠️ Couldn't deliver your account (DMs closed). It was returned to stock.")
-                
-        except Exception as e:
-            print(f"[generate] Error: {e}")
-            if raw:
-                db.restore_stock(category, raw)
+            await interaction.user.send(**dm_payload)
+            db.log_generate(str(interaction.user.id), category, raw)
+            await interaction.followup.send(**channel_payload)
+        except Exception:
+            db.restore_stock(category, raw)
+            db.update_user(str(interaction.user.id), {f"last_gen_{cat_key}": last_gen, "last_gen": user.get("last_gen", 0)})
+            await status_msg.edit(content="⚠️ Couldn't deliver your account (DMs closed). It was returned to stock.")
 
 
 class GenerateButtonHandler(commands.Cog):
-    """Handles persistent button interactions from generate embeds."""
-
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
@@ -321,7 +257,7 @@ class GenerateButtonHandler(commands.Cog):
                     "❌ Could not find credentials on this message.", ephemeral=True
                 )
             await interaction.response.send_message(
-                f"📋 **Tap and hold (or triple-click) to copy:**\n```{creds}```",
+                f"📋 **Tap and hold to copy:**\n```{creds}```",
                 ephemeral=True,
             )
 
