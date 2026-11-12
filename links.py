@@ -1,5 +1,5 @@
 """
-links.py — Account linking commands.
+links.py — Account linking commands via pure API.
 /linkxbox  /createkey  /redeemkey  /balance  /link
 """
 
@@ -11,10 +11,10 @@ import asyncio
 import random
 import string
 import os
-import json
 import database as db
 import utils
-from playwright.async_api import async_playwright
+import tls_client
+import base64
 
 # Helper to manage credits
 def get_user_credits(user_id: str) -> int:
@@ -34,7 +34,6 @@ def remove_user_credits(user_id: str, amount: int) -> bool:
         db.set_config("user_credits", credits)
         return True
     return False
-
 
 class Links(commands.Cog):
     def __init__(self, bot):
@@ -72,11 +71,8 @@ class Links(commands.Cog):
             return await interaction.followup.send("❌ Invalid key.", ephemeral=True)
             
         credits_to_add = keys[key]
-        
-        # Add credits to user
         add_user_credits(str(interaction.user.id), credits_to_add)
         
-        # Delete the key so it can't be reused
         del keys[key]
         db.set_config("link_keys", keys)
         
@@ -101,7 +97,6 @@ class Links(commands.Cog):
 
     @app_commands.command(name="linkxbox", description="Link an Xbox account using a device code.")
     async def linkxbox(self, interaction: discord.Interaction):
-        # Device code flow doesn't use credits, but you can add a check here if you want
         await interaction.response.defer(ephemeral=True)
         
         CLIENT_ID = "0000000048093EE3" 
@@ -161,139 +156,189 @@ class Links(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
 
-    @app_commands.command(name="link", description="Link a console account via Playwright.")
+    @app_commands.command(name="link", description="Link a console account via API.")
     @app_commands.describe(
         console="Xbox or PlayStation", 
         ubi_email="Ubisoft Email", 
         ubi_pass="Ubisoft Password",
-        console_cred="Xbox: email:pass | PS: NPSSO token"
+        console_cred="Xbox: Microsoft email:pass | PS: NPSSO token"
     )
     @app_commands.choices(console=[
         app_commands.Choice(name="Xbox", value="xbox"),
         app_commands.Choice(name="PlayStation", value="ps"),
     ])
     async def link(self, interaction: discord.Interaction, console: str, ubi_email: str, ubi_pass: str, console_cred: str):
-        # Check balance first
         credits = get_user_credits(str(interaction.user.id))
         if credits <= 0:
-            return await interaction.response.send_message("❌ You don't have any link credits. Use `/balance` to check and `/redeemkey` to add some.", ephemeral=True)
+            return await interaction.response.send_message("❌ You don't have any link credits.", ephemeral=True)
 
         await interaction.response.defer(ephemeral=True)
         
-        # Deduct credit
         if not remove_user_credits(str(interaction.user.id), 1):
             return await interaction.followup.send("❌ Error deducting credit.", ephemeral=True)
         
-        await interaction.followup.send(f"⏳ **Starting Link Process...** (1 credit deducted, you have {credits-1} left)\nCheck your DMs.", ephemeral=True)
+        await interaction.followup.send(f"⏳ **Starting Link Process...** (1 credit deducted)\nCheck your DMs.", ephemeral=True)
         
         proxies = self.load_proxies()
         proxy = random.choice(proxies) if proxies else None
 
+        # tls_client session to bypass DataDome/Cloudflare
+        session = tls_client.Session(client_identifier="chrome_120")
+        if proxy:
+            session.proxies = {"http": proxy, "https": proxy}
+
         try:
-            async with async_playwright() as p:
-                launch_args = ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
-                launch_kwargs = {"headless": True, "args": launch_args}
-                
-                if proxy:
-                    if "@" in proxy:
-                        auth, server = proxy.split("@")
-                        protocol, auth = auth.split("//")
-                        user, pwd = auth.split(":")
-                        launch_kwargs["proxy"] = {"server": f"{protocol}://{server}", "username": user, "password": pwd}
-                    else:
-                        launch_kwargs["proxy"] = {"server": proxy}
+            # 1. Login to Ubisoft
+            b64_auth = base64.b64encode(f"{ubi_email}:{ubi_pass}".encode('utf-8')).decode('utf-8')
+            login_url = "https://public-ubiservices.ubi.com/v3/profiles/sessions"
+            headers = {
+                "Content-Type": "application/json",
+                "Ubi-AppId": "314d4fef-e568-454a-ae06-43e3bece12a6",
+                "Authorization": f"Basic {b64_auth}",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            }
+            
+            login_res = session.post(login_url, headers=headers, json={"rememberMe": True})
+            
+            if login_res.status_code != 200:
+                add_user_credits(str(interaction.user.id), 1)
+                return await interaction.user.send("❌ Failed to log in to Ubisoft. Check credentials. (Credit refunded)")
 
-                browser = await p.chromium.launch(**launch_kwargs)
-                context = await browser.new_context(
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                )
-                page = await context.new_page()
-                await page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            ubi_token = login_res.json().get("ticket")
+            ubi_session_id = login_res.json().get("sessionId")
+
+            # 2. Link the Console
+            if console == "xbox":
+                ms_email, ms_pass = console_cred.split(":", 1)
                 
-                # 1. Login to Ubisoft
-                await page.goto("https://account.ubisoft.com/en-US/login", timeout=30000)
-                await page.wait_for_selector('input[name="email"]', timeout=15000)
-                await page.fill('input[name="email"]', ubi_email)
-                await page.fill('input[name="password"]', ubi_pass)
-                await page.click('button[type="submit"]')
-                await page.wait_for_timeout(5000)
+                # Microsoft OAuth
+                ms_url = "https://login.live.com/oauth20_token.srf"
+                ms_data = {
+                    "client_id": "0000000048093EE3",
+                    "grant_type": "password",
+                    "username": ms_email,
+                    "password": ms_pass,
+                    "scope": "XboxLive.signin"
+                }
+                ms_res = session.post(ms_url, data=ms_data)
                 
-                if "login" in page.url.lower():
-                    await browser.close()
-                    # Refund credit on failure
+                if ms_res.status_code != 200:
                     add_user_credits(str(interaction.user.id), 1)
-                    return await interaction.user.send("❌ Failed to log in. Wrong password or 2FA required. (Credit refunded)")
-
-                # 2. Go to Linking Page
-                await page.goto("https://account.ubisoft.com/en-US/account-linking", timeout=15000)
-                await page.wait_for_timeout(3000)
-
-                # 3. Click the Link Button based on Console
-                if console == "xbox":
-                    try:
-                        await page.click('button[data-testid="link-xbox"]', timeout=5000)
-                    except:
-                        await browser.close()
-                        add_user_credits(str(interaction.user.id), 1)
-                        return await interaction.user.send("❌ Could not find the Xbox Link button. (Credit refunded)")
-
-                    async with context.expect_page() as new_page_info:
-                        pass
-                    ms_page = await new_page_info.value
-                    await ms_page.wait_for_load_state()
-
-                    ms_email, ms_pass = console_cred.split(":", 1)
-                    await ms_page.fill('input[type="email"]', ms_email)
-                    await ms_page.click('input[type="submit"]')
-                    await ms_page.wait_for_timeout(2000)
-                    await ms_page.fill('input[type="password"]', ms_pass)
-                    await ms_page.click('input[type="submit"]')
-                    await ms_page.wait_for_timeout(5000)
+                    return await interaction.user.send("❌ Failed to log in to Microsoft. 2FA required or wrong password. (Credit refunded)")
                     
-                    if "identity/conditionalaccess" in ms_page.url or "proofs" in ms_page.url:
-                        await interaction.user.send("🛑 **2FA Required.** Microsoft sent a code. Reply here with the code.")
-                        
-                        def check(m):
-                            return m.author.id == interaction.user.id and m.channel.id == interaction.user.dm_channel.id
-                        
-                        try:
-                            msg = await self.bot.wait_for('message', timeout=120.0, check=check)
-                            await ms_page.fill('input[type="text"]', msg.content)
-                            await ms_page.click('input[type="submit"]')
-                            await ms_page.wait_for_timeout(5000)
-                        except asyncio.TimeoutError:
-                            await browser.close()
-                            add_user_credits(str(interaction.user.id), 1)
-                            return await interaction.user.send("❌ Timed out waiting for 2FA code. (Credit refunded)")
+                ms_token = ms_res.json().get("access_token")
 
-                    await page.wait_for_url("**/account-linking**", timeout=15000)
+                # Xbox Live Auth
+                xbl_url = "https://user.auth.xboxlive.com/user/authenticate"
+                xbl_headers = {"x-xbl-contract-version": "1", "Content-Type": "application/json"}
+                xbl_data = {
+                    "Properties": {"AuthMethod": "RPS", "SiteName": "user.auth.xboxlive.com", "RpsTicket": f"d={ms_token}"},
+                    "RelyingParty": "http://auth.xboxlive.com",
+                    "TokenType": "JWT"
+                }
+                xbl_res = session.post(xbl_url, headers=xbl_headers, json=xbl_data)
+                if xbl_res.status_code != 200:
+                    add_user_credits(str(interaction.user.id), 1)
+                    return await interaction.user.send("❌ Microsoft XBL auth failed. (Credit refunded)")
+                    
+                xbl_token = xbl_res.json().get("Token")
+                uhs = xbl_res.json().get("DisplayClaims").get("xui")[0].get("uhs")
+
+                # XSTS Auth
+                xsts_url = "https://xsts.auth.xboxlive.com/xsts/authorize"
+                xsts_data = {
+                    "Properties": {"SandboxId": "RETAIL", "UserTokens": [xbl_token]},
+                    "RelyingParty": "http://xboxlive.com",
+                    "TokenType": "JWT"
+                }
+                xsts_res = session.post(xsts_url, headers=xbl_headers, json=xsts_data)
+                if xsts_res.status_code != 200:
+                    add_user_credits(str(interaction.user.id), 1)
+                    return await interaction.user.send("❌ Xbox XSTS auth failed (Account may be banned). (Credit refunded)")
+
+                xsts_token = xsts_res.json().get("Token")
+
+                # Ubisoft Link
+                link_url = "https://public-ubiservices.ubi.com/v1/profiles/links"
+                link_headers = {
+                    "Authorization": f"Ubi_v1 t={ubi_token}",
+                    "Ubi-SessionId": ubi_session_id,
+                    "Ubi-AppId": "314d4fef-e568-454a-ae06-43e3bece12a6",
+                    "Content-Type": "application/json"
+                }
+                link_payload = {
+                    "platformType": "xbox",
+                    "platformId": uhs,
+                    "ticket": xsts_token
+                }
+
+                link_res = session.post(link_url, headers=link_headers, json=link_payload)
+                
+                if link_res.status_code in (200, 201):
                     await interaction.user.send("✅ **Success!** Your Xbox account has been linked.")
+                else:
+                    add_user_credits(str(interaction.user.id), 1)
+                    await interaction.user.send(f"❌ Ubisoft rejected the link. (Status: {link_res.status_code}). (Credit refunded)")
 
-                elif console == "ps":
-                    try:
-                        await page.click('button[data-testid="link-ps"]', timeout=5000)
-                    except:
-                        await browser.close()
-                        add_user_credits(str(interaction.user.id), 1)
-                        return await interaction.user.send("❌ Could not find the PS Link button. (Credit refunded)")
+            elif console == "ps":
+                # PlayStation NPSSO exchange
+                ps_url = "https://ca.account.sony.com/api/authz/v3/oauth/authorize"
+                ps_params = {
+                    "access_type": "offline",
+                    "client_id": "09515159-7237-4370-9b40-3806e67c0891",
+                    "redirect_uri": "com.scee.psxandroid.scecompcall://redirect",
+                    "response_type": "code",
+                    "scope": "psn:mobile.v2.core psn:clientapp"
+                }
+                ps_cookies = {"npsso": console_cred}
+                
+                ps_res = session.get(ps_url, params=ps_params, cookies=ps_cookies, allow_redirects=False)
+                
+                if "Location" not in ps_res.headers:
+                    add_user_credits(str(interaction.user.id), 1)
+                    return await interaction.user.send("❌ Invalid NPSSO token. (Credit refunded)")
+                    
+                redirect_url = ps_res.headers["Location"]
+                auth_code = redirect_url.split("code=")[1].split("&")[0]
 
-                    async with context.expect_page() as new_page_info:
-                        pass
-                    ps_page = await new_page_info.value
-                    await ps_page.wait_for_load_state()
+                # PSN Token Exchange
+                ps_token_url = "https://ca.account.sony.com/api/authz/v3/oauth/token"
+                ps_token_data = {
+                    "code": auth_code,
+                    "redirect_uri": "com.scee.psxandroid.scecompcall://redirect",
+                    "grant_type": "authorization_code",
+                    "token_format": "jwt"
+                }
+                ps_token_res = session.post(ps_token_url, data=ps_token_data)
+                
+                if ps_token_res.status_code != 200:
+                    add_user_credits(str(interaction.user.id), 1)
+                    return await interaction.user.send("❌ PSN Token exchange failed. (Credit refunded)")
                     
-                    await ps_page.wait_for_selector('input[name="username"]', timeout=15000)
-                    await ps_page.fill('input[name="username"]', console_cred)
-                    await ps_page.click('button[type="submit"]')
-                    await ps_page.wait_for_timeout(5000)
-                    
-                    await page.wait_for_url("**/account-linking**", timeout=15000)
+                ps_token = ps_token_res.json().get("access_token")
+
+                # Ubisoft Link
+                link_url = "https://public-ubiservices.ubi.com/v1/profiles/links"
+                link_headers = {
+                    "Authorization": f"Ubi_v1 t={ubi_token}",
+                    "Ubi-SessionId": ubi_session_id,
+                    "Ubi-AppId": "314d4fef-e568-454a-ae06-43e3bece12a6",
+                    "Content-Type": "application/json"
+                }
+                link_payload = {
+                    "platformType": "psn",
+                    "ticket": ps_token
+                }
+
+                link_res = session.post(link_url, headers=link_headers, json=link_payload)
+                
+                if link_res.status_code in (200, 201):
                     await interaction.user.send("✅ **Success!** Your PlayStation account has been linked.")
-
-                await browser.close()
+                else:
+                    add_user_credits(str(interaction.user.id), 1)
+                    await interaction.user.send(f"❌ Ubisoft rejected the PSN link. (Status: {link_res.status_code}). (Credit refunded)")
 
         except Exception as e:
-            # Refund on exception
             add_user_credits(str(interaction.user.id), 1)
             await interaction.user.send(f"❌ Failed to link: `{str(e)}` (Credit refunded)")
 
