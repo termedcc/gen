@@ -10,6 +10,7 @@ import aiohttp
 import asyncio
 import random
 import string
+import os
 import database as db
 import utils
 from playwright.async_api import async_playwright
@@ -17,6 +18,12 @@ from playwright.async_api import async_playwright
 class Links(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+
+    def load_proxies(self):
+        if os.path.exists("proxies.txt"):
+            with open("proxies.txt", "r") as f:
+                return [line.strip() for line in f if line.strip()]
+        return []
 
     @app_commands.command(name="createkey", description="[Owner] Create a linking key.")
     @app_commands.describe(uses="How many times this key can be used")
@@ -40,10 +47,13 @@ class Links(commands.Cog):
         SCOPE = "XboxLive.signin offline_access"
         url = "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode"
         data = {"client_id": CLIENT_ID, "scope": SCOPE}
+        
+        proxies = self.load_proxies()
+        proxy = random.choice(proxies) if proxies else None
 
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(url, data=data) as res:
+                async with session.post(url, data=data, proxy=proxy) as res:
                     if res.status != 200:
                         return await interaction.followup.send("❌ Failed to contact Microsoft.", ephemeral=True)
                     
@@ -74,7 +84,7 @@ class Links(commands.Cog):
 
                     for _ in range(60): # Wait up to 5 minutes
                         await asyncio.sleep(interval)
-                        async with session.post(token_url, data=token_data) as token_res:
+                        async with session.post(token_url, data=token_data, proxy=proxy) as token_res:
                             if token_res.status == 200:
                                 await msg.edit(content="✅ **Xbox account successfully authorized!**\n*(Note: You must link this on the Ubisoft website manually for now).*", embed=None)
                                 return
@@ -112,17 +122,36 @@ class Links(commands.Cog):
         
         await interaction.followup.send("⏳ **Starting Link Process...**\nYou will receive a DM shortly if 2FA is required.", ephemeral=True)
         
+        proxies = self.load_proxies()
+        proxy = random.choice(proxies) if proxies else None
+
         try:
             async with async_playwright() as p:
-                # Launch with stealth arguments to bypass Cloudflare/DataDome
-                browser = await p.chromium.launch(
-                    headless=True,
-                    args=[
-                        "--disable-blink-features=AutomationControlled",
-                        "--no-sandbox",
-                        "--disable-setuid-sandbox"
-                    ]
-                )
+                # Launch with stealth arguments and proxy
+                launch_args = [
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox"
+                ]
+                
+                launch_kwargs = {"headless": True, "args": launch_args}
+                if proxy:
+                    # Playwright requires proxy split into server, username, password
+                    # Assuming format http://user:pass@ip:port
+                    if "@" in proxy:
+                        auth, server = proxy.split("@")
+                        protocol, auth = auth.split("//")
+                        user, pwd = auth.split(":")
+                        launch_kwargs["proxy"] = {
+                            "server": f"{protocol}://{server}",
+                            "username": user,
+                            "password": pwd
+                        }
+                    else:
+                        launch_kwargs["proxy"] = {"server": proxy}
+
+                browser = await p.chromium.launch(**launch_kwargs)
+                
                 context = await browser.new_context(
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                     viewport={"width": 1920, "height": 1080}
@@ -145,10 +174,6 @@ class Links(commands.Cog):
                 # Go to linking page
                 await page.goto("https://account.ubisoft.com/en-US/account-linking", timeout=15000)
                 await page.wait_for_timeout(3000)
-
-                # NOTE: Automating the actual Xbox/PS link click requires complex DOM targeting
-                # because the login prompts are iframes. 
-                # If running on a Residential IP (laptop), this script will at least log in successfully.
                 
                 await browser.close()
                 await interaction.user.send("✅ Ubisoft login successful. Manual linking may be required due to Microsoft/Sony iframes.")
