@@ -1,6 +1,5 @@
 """
-links.py — Account linking commands.
-/linknow  /createkey  /redeemkey  /balance
+links.py — Ultimate Account Linking (Xbox Device Code + PSN NPSSO)
 """
 
 import discord
@@ -16,6 +15,7 @@ import utils
 import tls_client
 import base64
 import re
+import io
 
 # Helper to manage credits
 def get_user_credits(user_id: str) -> int:
@@ -96,9 +96,6 @@ class Links(commands.Cog):
         embed.set_footer(text="Use /redeemkey to add more credits.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    # =========================================================================
-    # THE NEW /linknow COMMAND WITH BUTTONS
-    # =========================================================================
     @app_commands.command(name="linknow", description="Link a console account to your Ubisoft account.")
     async def linknow(self, interaction: discord.Interaction):
         credits = get_user_credits(str(interaction.user.id))
@@ -108,13 +105,13 @@ class Links(commands.Cog):
         embed = discord.Embed(
             color=0x5865F2,
             title="🔗 Choose Your Console",
-            description="Select the platform you want to link to your Ubisoft account.\n\n**⚠️ You must be logged into this console account on your phone's browser (Safari/Chrome) before starting.**"
+            description="Select the platform you want to link to your Ubisoft account.\n\n**⚠️ You must have access to the email/phone for this account to approve the link.**"
         )
         view = ConsoleSelectView(self.bot)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     # Helper function for the actual linking logic
-    async def process_link(self, bot, user, console, ubi_email, ubi_pass, console_cred):
+    async def process_link(self, bot, user, console, ubi_email, ubi_pass, console_cred=None):
         proxies = self.load_proxies()
         proxy = random.choice(proxies) if proxies else None
         session = tls_client.Session(client_identifier="chrome_120")
@@ -142,24 +139,12 @@ class Links(commands.Cog):
 
         # 2. Console Specific Linking
         if console == "xbox":
-            ms_email, ms_pass = console_cred.split(":", 1)
-            
-            # Microsoft OAuth
-            ms_url = "https://login.live.com/oauth20_token.srf"
-            ms_data = {
-                "client_id": "0000000048093EE3",
-                "grant_type": "password",
-                "username": ms_email,
-                "password": ms_pass,
-                "scope": "XboxLive.signin"
-            }
-            ms_res = session.post(ms_url, data=ms_data)
-            
-            if ms_res.status_code != 200:
+            if not console_cred:
                 add_user_credits(str(user.id), 1)
-                return await user.send("❌ Failed to log in to Microsoft. Check your email/pass. (Credit refunded)")
-                
-            ms_token = ms_res.json().get("access_token")
+                return await user.send("❌ No Xbox authorization provided. (Credit refunded)")
+
+            # Device Code flow already gave us the Microsoft Access Token, we just need XBL and XSTS
+            ms_token = console_cred
 
             # Xbox Live Auth
             xbl_url = "https://user.auth.xboxlive.com/user/authenticate"
@@ -282,30 +267,13 @@ class ConsoleSelectView(discord.ui.View):
 
     @discord.ui.button(label="Xbox", style=discord.ButtonStyle.success, emoji="🎮")
     async def xbox_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Deduct credit
         if not remove_user_credits(str(interaction.user.id), 1):
             return await interaction.response.send_message("❌ You ran out of credits.", ephemeral=True)
         
         await interaction.response.send_message("⏳ Starting Xbox link process... Check your DMs.", ephemeral=True)
         
         try:
-            dm = await interaction.user.send("**Step 1:** Do you have access to the email for the Microsoft account?")
-            await dm.add_reaction("✅")
-            await dm.add_reaction("❌")
-            
-            def check(reaction, user):
-                return user == interaction.user and str(reaction.emoji) in ["✅", "❌"] and reaction.message.id == dm.id
-                
-            try:
-                reaction, user = await self.bot.wait_for("reaction_add", timeout=60.0, check=check)
-                if str(reaction.emoji) == "❌":
-                    add_user_credits(str(interaction.user.id), 1)
-                    return await interaction.user.send("❌ Link cancelled. (Credit refunded)")
-            except asyncio.TimeoutError:
-                add_user_credits(str(interaction.user.id), 1)
-                return await interaction.user.send("❌ Timed out. (Credit refunded)")
-
-            await interaction.user.send("**Step 2:** Reply with your Ubisoft `email:password`")
+            dm = await interaction.user.send("**Step 1:** Reply with your Ubisoft `email:password`")
             
             def msg_check(m):
                 return m.author == interaction.user and m.channel == dm.channel
@@ -317,19 +285,70 @@ class ConsoleSelectView(discord.ui.View):
                 add_user_credits(str(interaction.user.id), 1)
                 return await interaction.user.send("❌ Invalid format. (Credit refunded)")
 
-            await interaction.user.send("**Step 3:** Reply with your Microsoft `email:password`")
+            # Generate Microsoft Device Code
+            CLIENT_ID = "0000000048093EE3" 
+            SCOPE = "XboxLive.signin offline_access"
+            url = "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode"
+            data = {"client_id": CLIENT_ID, "scope": SCOPE}
             
-            try:
-                ms_msg = await self.bot.wait_for("message", timeout=60.0, check=msg_check)
-                ms_cred = ms_msg.content
-            except Exception:
-                add_user_credits(str(interaction.user.id), 1)
-                return await interaction.user.send("❌ Timed out. (Credit refunded)")
+            proxies = self.bot.get_cog("Links").load_proxies()
+            proxy = random.choice(proxies) if proxies else None
 
-            await interaction.user.send("⏳ Processing your link... This takes 5 seconds.")
-            
-            cog = self.bot.get_cog("Links")
-            await cog.process_link(self.bot, interaction.user, "xbox", ubi_email, ubi_pass, ms_cred)
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, data=data, proxy=proxy) as res:
+                    if res.status != 200:
+                        add_user_credits(str(interaction.user.id), 1)
+                        return await interaction.user.send("❌ Failed to contact Microsoft. (Credit refunded)")
+                    
+                    auth_data = await res.json()
+                    user_code = auth_data["user_code"]
+                    device_code = auth_data["device_code"]
+                    verify_uri = auth_data["verification_uri"]
+                    interval = auth_data.get("interval", 5)
+                    
+                    await interaction.user.send(
+                        f"**Step 2:** Go to: {verify_uri}\n"
+                        f"Enter this code: `{user_code}`\n"
+                        f"Log in to your Microsoft account and approve the request.\n\n"
+                        f"*Reply with **done** here once you've approved it.*"
+                    )
+
+                    try:
+                        await self.bot.wait_for("message", timeout=300.0, check=msg_check)
+                    except asyncio.TimeoutError:
+                        add_user_credits(str(interaction.user.id), 1)
+                        return await interaction.user.send("❌ Timed out waiting for authorization. (Credit refunded)")
+
+                    # Poll for the Microsoft token
+                    token_url = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
+                    token_data = {
+                        "client_id": CLIENT_ID,
+                        "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                        "device_code": device_code
+                    }
+
+                    ms_token = None
+                    for _ in range(60):
+                        async with session.post(token_url, data=token_data, proxy=proxy) as token_res:
+                            if token_res.status == 200:
+                                ms_token = (await token_res.json()).get("access_token")
+                                break
+                            elif token_res.status == 400:
+                                err = await token_res.json()
+                                if err.get("error") == "authorization_pending":
+                                    await asyncio.sleep(interval)
+                                    continue
+                                else:
+                                    break
+                    
+                    if not ms_token:
+                        add_user_credits(str(interaction.user.id), 1)
+                        return await interaction.user.send("❌ Failed to get Microsoft token. (Credit refunded)")
+
+                    await interaction.user.send("⏳ Processing your link... This takes 5 seconds.")
+                    
+                    cog = self.bot.get_cog("Links")
+                    await cog.process_link(self.bot, interaction.user, "xbox", ubi_email, ubi_pass, ms_token)
 
         except Exception as e:
             add_user_credits(str(interaction.user.id), 1)
@@ -343,14 +362,18 @@ class ConsoleSelectView(discord.ui.View):
         await interaction.response.send_message("⏳ Starting PlayStation link process... Check your DMs.", ephemeral=True)
         
         try:
-            dm = await interaction.user.send("**Step 1:** Open Safari and go to this link:\nhttps://ca.account.sony.com/api/authz/v3/oauth/authorize?access_type=offline&client_id=09515159-7237-4370-9b40-3806e67c0891&redirect_uri=com.scee.psxandroid.scecompcall://redirect&response_type=code&scope=psn:mobile.v2.core%20psn:clientapp\n\n**Step 2:** Log in to your PSN account.\n\n**Step 3:** Once logged in, it will redirect you to a blank page. Look at the URL bar. Copy the entire URL and paste it here.")
+            dm = await interaction.user.send(
+                "**Step 1:** Open Safari and go to this link:\n"
+                "https://ca.account.sony.com/api/authz/v3/oauth/authorize?access_type=offline&client_id=09515159-7237-4370-9b40-3806e67c0891&redirect_uri=com.scee.psxandroid.scecompcall://redirect&response_type=code&scope=psn:mobile.v2.core%20psn:clientapp\n\n"
+                "**Step 2:** Log in to your PSN account.\n\n"
+                "**Step 3:** Once logged in, it will redirect you to a blank page. Look at the URL bar. Copy the entire URL and paste it here."
+            )
             
             def msg_check(m):
                 return m.author == interaction.user and m.channel == dm.channel
                 
             try:
                 url_msg = await self.bot.wait_for("message", timeout=120.0, check=msg_check)
-                # Extract the code from the redirect URL
                 match = re.search(r"code=([^&]+)", url_msg.content)
                 if not match:
                     add_user_credits(str(interaction.user.id), 1)
