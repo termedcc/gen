@@ -125,7 +125,10 @@ class Checker(commands.Cog):
                     await interaction.followup.send(f"⚠️ Error: HTTP {status_code}", ephemeral=True)
 
         except Exception as e:
-            await interaction.followup.send(f"❌ Browser error: {e}", ephemeral=True)
+            err_msg = str(e)
+            if len(err_msg) > 1900:
+                err_msg = err_msg[:1900] + "..."
+            await interaction.followup.send(f"❌ Browser error: {err_msg}", ephemeral=True)
 
         await self.log_to_channel(interaction, embed)
 
