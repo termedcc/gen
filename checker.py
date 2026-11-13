@@ -60,7 +60,6 @@ class Checker(commands.Cog):
         try:
             async with async_playwright() as p:
                 launch_args = ["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-setuid-sandbox"]
-                # CHANGED TO HEADLESS=TRUE
                 launch_kwargs = {"headless": True, "args": launch_args}
                 
                 if proxy:
@@ -69,10 +68,12 @@ class Checker(commands.Cog):
                         auth_part, server_part = proxy.split("@")
                         protocol = auth_part.split("://")[0]
                         user_pass = auth_part.split("://")[1]
-                        user, pwd = user_pass.split(":")
+                        user, pwd = user_pass.split(":", 1)
+                        
+                        server_host = server_part.replace("http://", "").replace("https://", "")
                         
                         launch_kwargs["proxy"] = {
-                            "server": f"{protocol}://{server_part}",
+                            "server": f"{protocol}://{server_host}",
                             "username": user,
                             "password": pwd
                         }
@@ -234,9 +235,12 @@ class Checker(commands.Cog):
                                 auth_part, server_part = proxy.split("@")
                                 protocol = auth_part.split("://")[0]
                                 user_pass = auth_part.split("://")[1]
-                                user, pwd = user_pass.split(":")
+                                user, pwd = user_pass.split(":", 1)
+                                
+                                server_host = server_part.replace("http://", "").replace("https://", "")
+                                
                                 launch_kwargs["proxy"] = {
-                                    "server": f"{protocol}://{server_part}",
+                                    "server": f"{protocol}://{server_host}",
                                     "username": user,
                                     "password": pwd
                                 }
