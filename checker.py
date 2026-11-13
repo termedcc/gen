@@ -54,13 +54,14 @@ class Checker(commands.Cog):
         
         proxy = random.choice(self.proxies) if self.proxies else None
         
-        embed = discord.Embed(color=0x5865F2, title="🔍 Account Check", description=f"**User:** {interaction.user.mention}\n**Input:** `{account}`\n\n⏳ *Booting real browser... (This takes 10-15 seconds)*")
+        embed = discord.Embed(color=0x5865F2, title="🔍 Account Check", description=f"**User:** {interaction.user.mention}\n**Input:** `{account}`\n\n⏳ *Booting browser... (This takes 10-15 seconds)*")
         await interaction.followup.send(embed=embed, ephemeral=True)
 
         try:
             async with async_playwright() as p:
-                launch_args = ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
-                launch_kwargs = {"headless": False, "args": launch_args}
+                launch_args = ["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-setuid-sandbox"]
+                # CHANGED TO HEADLESS=TRUE
+                launch_kwargs = {"headless": True, "args": launch_args}
                 
                 if proxy:
                     proxy = proxy.strip()
@@ -224,8 +225,8 @@ class Checker(commands.Cog):
                 
                 try:
                     async with async_playwright() as p:
-                        launch_args = ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
-                        launch_kwargs = {"headless": False, "args": launch_args}
+                        launch_args = ["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-setuid-sandbox"]
+                        launch_kwargs = {"headless": True, "args": launch_args}
                         
                         if proxy:
                             proxy = proxy.strip()
