@@ -11,14 +11,14 @@ import os
 import tls_client
 import json
 
-UBI_APP_ID = "314d4fef-e568-454a-ae06-43e3bece12a6"
+# R6 Tracker App ID - often bypasses DataDome because it's whitelisted
+UBI_APP_ID = "f68a4a32-28b1-4e20-9f9f-6b9b6d1b8a52"
 
 class Checker(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.proxies = self.load_proxies()
         
-        # Load skin cache if it exists
         self.skin_cache = {}
         if os.path.exists("r6-skins-cache.json"):
             try:
@@ -61,8 +61,9 @@ class Checker(commands.Cog):
             "Ubi-AppId": UBI_APP_ID,
             "Authorization": f"Basic {b64_auth}",
             "Accept": "application/json",
-            "Origin": "https://account.ubisoft.com",
-            "Referer": "https://account.ubisoft.com/",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Origin": "https://r6.tracker.network",
+            "Referer": "https://r6.tracker.network/",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
 
@@ -203,8 +204,9 @@ class Checker(commands.Cog):
                     "Ubi-AppId": UBI_APP_ID,
                     "Authorization": f"Basic {b64_auth}",
                     "Accept": "application/json",
-                    "Origin": "https://account.ubisoft.com",
-                    "Referer": "https://account.ubisoft.com/",
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Origin": "https://r6.tracker.network",
+                    "Referer": "https://r6.tracker.network/",
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 }
 
