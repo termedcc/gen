@@ -57,13 +57,14 @@ class Checker(commands.Cog):
         await asyncio.sleep(random.uniform(1.0, 2.0))
 
         headers = {
-            "Content-Type": "application/x-www-form-urlencoded",
+            "Content-Type": "application/json",
             "Ubi-AppId": UBI_APP_ID,
             "Authorization": f"Basic {b64_auth}",
             "Accept": "application/json",
             "Accept-Language": "en-US,en;q=0.9",
             "Origin": "https://r6.tracker.network",
             "Referer": "https://r6.tracker.network/",
+            "Ubi-SpaceId": "0d2ae42d-4c27-4cb7-af6c-2099062302bb", # R6 Space ID
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
 
@@ -80,7 +81,7 @@ class Checker(commands.Cog):
                 return session.post(
                     "https://public-ubiservices.ubi.com/v3/profiles/sessions",
                     headers=headers,
-                    data="rememberMe=true",
+                    json={"rememberMe": True}, # Using built-in json parameter for tls_client
                     timeout_seconds=15
                 )
 
@@ -200,13 +201,14 @@ class Checker(commands.Cog):
                 b64_auth = base64.b64encode(f"{email}:{password}".encode('utf-8')).decode('utf-8')
                 
                 headers = {
-                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Content-Type": "application/json",
                     "Ubi-AppId": UBI_APP_ID,
                     "Authorization": f"Basic {b64_auth}",
                     "Accept": "application/json",
                     "Accept-Language": "en-US,en;q=0.9",
                     "Origin": "https://r6.tracker.network",
                     "Referer": "https://r6.tracker.network/",
+                    "Ubi-SpaceId": "0d2ae42d-4c27-4cb7-af6c-2099062302bb",
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 }
 
@@ -219,7 +221,7 @@ class Checker(commands.Cog):
                     return session.post(
                         "https://public-ubiservices.ubi.com/v3/profiles/sessions",
                         headers=headers,
-                        data="rememberMe=true",
+                        json={"rememberMe": True},
                         timeout_seconds=15
                     )
 
