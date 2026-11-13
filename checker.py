@@ -9,6 +9,7 @@ import random
 import io
 import os
 from curl_cffi import requests
+import json
 
 UBI_APP_ID = "314d4fef-e568-454a-ae06-43e3bece12a6"
 
@@ -16,6 +17,15 @@ class Checker(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.proxies = self.load_proxies()
+        
+        # Load skin cache if it exists
+        self.skin_cache = {}
+        if os.path.exists("r6-skins-cache.json"):
+            try:
+                with open("r6-skins-cache.json", "r", encoding="utf-8") as f:
+                    self.skin_cache = json.load(f)
+            except Exception:
+                pass
 
     def load_proxies(self):
         if os.path.exists("proxies.txt"):
@@ -60,7 +70,6 @@ class Checker(commands.Cog):
         proxy = random.choice(self.proxies) if self.proxies else None
 
         try:
-            # Use curl_cffi to spoof Chrome TLS
             response = requests.post(
                 "https://public-ubiservices.ubi.com/v3/profiles/sessions",
                 headers=headers,
@@ -92,6 +101,64 @@ class Checker(commands.Cog):
             await interaction.followup.send(f"⚠️ Network error: {e}", ephemeral=True)
 
         await self.log_to_channel(interaction, embed)
+
+    @app_commands.command(name="preview", description="Preview an account's R6 inventory and rare items.")
+    @app_commands.describe(account="Format: email:password")
+    async def preview(self, interaction: discord.Interaction, account: str):
+        if not await utils.owner_only(interaction):
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        
+        if ":" not in account:
+            return await interaction.followup.send("❌ Invalid format. Use `email:password`.", ephemeral=True)
+
+        email, password = account.split(":", 1)
+        
+        # Fetch data using the website script logic
+        try:
+            from fetch_inventory import get_account_data
+            result = await asyncio.to_thread(get_account_data, email, password)
+        except Exception as e:
+            return await interaction.followup.send(f"❌ Error fetching data: {e}", ephemeral=True)
+
+        if "error" in result:
+            return await interaction.followup.send(f"❌ Error: {result['error']}", ephemeral=True)
+            
+        username = result.get("username", "Unknown")
+        profile_id = result.get("profile_id", "Unknown")
+        inventory = result.get("inventory", {})
+        items = inventory.get("items", [])
+        
+        embed = discord.Embed(
+            color=0x5865F2,
+            title=f"👤 Account Preview: {username}",
+            description=f"**Profile ID:** `{profile_id}`\n**Total Items:** `{len(items)}`"
+        )
+        
+        # --- RARE SKIN COUNTING (Requires r6-skins-cache.json) ---
+        glaciers = 0
+        black_ice = 0
+        
+        if self.skin_cache:
+            for item in items:
+                item_id = item.get('id')
+                if item_id in self.skin_cache:
+                    # Handle both dict and string formats in cache
+                    cache_entry = self.skin_cache[item_id]
+                    skin_name = cache_entry.get('name', '') if isinstance(cache_entry, dict) else str(cache_entry)
+                    
+                    if "Glacier" in skin_name: glaciers += 1
+                    if "Black Ice" in skin_name: black_ice += 1
+            
+            embed.add_field(name="❄️ Rare Skins", value=f"Black Ice: `{black_ice}`\nGlacier: `{glaciers}`", inline=True)
+        else:
+            embed.add_field(name="❄️ Rare Skins", value="⚠️ Cache not loaded", inline=True)
+        
+        embed.add_field(name="🎖️ Ranked", value="Rank data not fetched", inline=True)
+        embed.set_footer(text="Use /check to verify login status")
+        
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="checkfile", description="[Owner] Upload a .txt file to filter valid accounts.")
     @app_commands.describe(file=".txt file with email:pass on each line")
