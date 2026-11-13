@@ -66,14 +66,20 @@ class Checker(commands.Cog):
                     proxy = proxy.strip()
                     if "@" in proxy:
                         auth_part, server_part = proxy.split("@")
-                        protocol = auth_part.split("://")[0]
-                        user_pass = auth_part.split("://")[1]
+                        
+                        if "://" in auth_part:
+                            protocol = auth_part.split("://")[0]
+                            user_pass = auth_part.split("://")[1]
+                        else:
+                            protocol = "http"
+                            user_pass = auth_part
+                            
                         user, pwd = user_pass.split(":", 1)
                         
                         server_host = server_part.replace("http://", "").replace("https://", "")
                         
                         launch_kwargs["proxy"] = {
-                            "server": f"{protocol}://{server_host}",
+                            "server": f"http://{server_host}",
                             "username": user,
                             "password": pwd
                         }
@@ -233,14 +239,20 @@ class Checker(commands.Cog):
                             proxy = proxy.strip()
                             if "@" in proxy:
                                 auth_part, server_part = proxy.split("@")
-                                protocol = auth_part.split("://")[0]
-                                user_pass = auth_part.split("://")[1]
+                                
+                                if "://" in auth_part:
+                                    protocol = auth_part.split("://")[0]
+                                    user_pass = auth_part.split("://")[1]
+                                else:
+                                    protocol = "http"
+                                    user_pass = auth_part
+                                    
                                 user, pwd = user_pass.split(":", 1)
                                 
                                 server_host = server_part.replace("http://", "").replace("https://", "")
                                 
                                 launch_kwargs["proxy"] = {
-                                    "server": f"{protocol}://{server_host}",
+                                    "server": f"http://{server_host}",
                                     "username": user,
                                     "password": pwd
                                 }
