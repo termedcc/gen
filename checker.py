@@ -60,7 +60,7 @@ class Checker(commands.Cog):
         try:
             async with async_playwright() as p:
                 launch_args = ["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-setuid-sandbox"]
-                launch_kwargs = {"headless": False, "args": launch_args}
+                launch_kwargs = {"headless": True, "args": launch_args}
                 
                 if proxy:
                     proxy = proxy.strip()
@@ -217,7 +217,7 @@ class Checker(commands.Cog):
                 try:
                     async with async_playwright() as p:
                         launch_args = ["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-setuid-sandbox"]
-                        launch_kwargs = {"headless": False, "args": launch_args}
+                        launch_kwargs = {"headless": True, "args": launch_args}
                         
                         if proxy:
                             proxy = proxy.strip()
