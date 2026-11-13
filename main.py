@@ -82,7 +82,7 @@ COGS = [
     "ai",
     "checker",
     "links",
-    "fetch_inventory",
+
     
 ]
 
