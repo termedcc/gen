@@ -1,1 +1,1 @@
-http://frMh5PhW17JjkLUp:nEmTZMdjuUnQfrPC_country-us@geo.iproyal.com:12321
+socks5://frMh5PhW17JjkLUp:nEmTZMdjuUnQfrPC@geo.iproyal.com:12321
