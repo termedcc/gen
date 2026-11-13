@@ -1,10 +1,1 @@
-http://frMh5PhW17JjkLUp:nEmTZMdjuUnQfrPC_country-us_session-dhUM0ApU_lifetime-30m@geo.iproyal.com:12321
-http://frMh5PhW17JjkLUp:nEmTZMdjuUnQfrPC_country-us_session-jrLxocKR_lifetime-30m@geo.iproyal.com:12321
-http://frMh5PhW17JjkLUp:nEmTZMdjuUnQfrPC_country-us_session-5NTJvAsY_lifetime-30m@geo.iproyal.com:12321
-http://frMh5PhW17JjkLUp:nEmTZMdjuUnQfrPC_country-us_session-ogrwzW0i_lifetime-30m@geo.iproyal.com:12321
-http://frMh5PhW17JjkLUp:nEmTZMdjuUnQfrPC_country-us_session-iTX2cTAU_lifetime-30m@geo.iproyal.com:12321
-http://frMh5PhW17JjkLUp:nEmTZMdjuUnQfrPC_country-us_session-SVfCCQhR_lifetime-30m@geo.iproyal.com:12321
-http://frMh5PhW17JjkLUp:nEmTZMdjuUnQfrPC_country-us_session-eLPq3y6A_lifetime-30m@geo.iproyal.com:12321
-http://frMh5PhW17JjkLUp:nEmTZMdjuUnQfrPC_country-us_session-QaUT6HhK_lifetime-30m@geo.iproyal.com:12321
-http://frMh5PhW17JjkLUp:nEmTZMdjuUnQfrPC_country-us_session-pI5BA1EK_lifetime-30m@geo.iproyal.com:12321
-http://frMh5PhW17JjkLUp:nEmTZMdjuUnQfrPC_country-us_session-e84tcw9W_lifetime-30m@geo.iproyal.com:12321
+http://frMh5PhW17JjkLUp:nEmTZMdjuUnQfrPC_country-us@geo.iproyal.com:12321
