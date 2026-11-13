@@ -60,13 +60,18 @@ class Checker(commands.Cog):
         try:
             async with async_playwright() as p:
                 launch_args = ["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-setuid-sandbox"]
-                launch_kwargs = {"headless": True, "args": launch_args}
+                # REMOVED PROXY FROM LAUNCH
+                browser = await p.chromium.launch(headless=True, args=launch_args)
                 
+                context_args = {
+                    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                }
+                
+                # ADDED PROXY TO CONTEXT (More stable)
                 if proxy:
                     proxy = proxy.strip()
                     if "@" in proxy:
                         auth_part, server_part = proxy.split("@")
-                        
                         if "://" in auth_part:
                             protocol = auth_part.split("://")[0]
                             user_pass = auth_part.split("://")[1]
@@ -75,21 +80,17 @@ class Checker(commands.Cog):
                             user_pass = auth_part
                             
                         user, pwd = user_pass.split(":", 1)
-                        
                         server_host = server_part.replace("http://", "").replace("https://", "")
                         
-                        launch_kwargs["proxy"] = {
+                        context_args["proxy"] = {
                             "server": f"http://{server_host}",
                             "username": user,
                             "password": pwd
                         }
                     else:
-                        launch_kwargs["proxy"] = {"server": proxy}
+                        context_args["proxy"] = {"server": proxy}
 
-                browser = await p.chromium.launch(**launch_kwargs)
-                context = await browser.new_context(
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                )
+                context = await browser.new_context(**context_args)
                 page = await context.new_page()
                 
                 await page.goto("https://account.ubisoft.com/")
@@ -233,13 +234,13 @@ class Checker(commands.Cog):
                 try:
                     async with async_playwright() as p:
                         launch_args = ["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-setuid-sandbox"]
-                        launch_kwargs = {"headless": True, "args": launch_args}
+                        browser = await p.chromium.launch(headless=True, args=launch_args)
                         
+                        context_args = {}
                         if proxy:
                             proxy = proxy.strip()
                             if "@" in proxy:
                                 auth_part, server_part = proxy.split("@")
-                                
                                 if "://" in auth_part:
                                     protocol = auth_part.split("://")[0]
                                     user_pass = auth_part.split("://")[1]
@@ -248,19 +249,17 @@ class Checker(commands.Cog):
                                     user_pass = auth_part
                                     
                                 user, pwd = user_pass.split(":", 1)
-                                
                                 server_host = server_part.replace("http://", "").replace("https://", "")
                                 
-                                launch_kwargs["proxy"] = {
+                                context_args["proxy"] = {
                                     "server": f"http://{server_host}",
                                     "username": user,
                                     "password": pwd
                                 }
                             else:
-                                launch_kwargs["proxy"] = {"server": proxy}
+                                context_args["proxy"] = {"server": proxy}
 
-                        browser = await p.chromium.launch(**launch_kwargs)
-                        context = await browser.new_context()
+                        context = await browser.new_context(**context_args)
                         page = await context.new_page()
                         
                         await page.goto("https://account.ubisoft.com/")
