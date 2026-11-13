@@ -11,7 +11,7 @@ import os
 import tls_client
 import json
 
-# R6 Tracker App ID - often bypasses DataDome because it's whitelisted
+# R6 Tracker App ID
 UBI_APP_ID = "f68a4a32-28b1-4e20-9f9f-6b9b6d1b8a52"
 
 class Checker(commands.Cog):
@@ -57,7 +57,7 @@ class Checker(commands.Cog):
         await asyncio.sleep(random.uniform(1.0, 2.0))
 
         headers = {
-            "Content-Type": "application/json",
+            "Content-Type": "application/x-www-form-urlencoded",
             "Ubi-AppId": UBI_APP_ID,
             "Authorization": f"Basic {b64_auth}",
             "Accept": "application/json",
@@ -80,7 +80,7 @@ class Checker(commands.Cog):
                 return session.post(
                     "https://public-ubiservices.ubi.com/v3/profiles/sessions",
                     headers=headers,
-                    json={"rememberMe": True},
+                    data="rememberMe=true",
                     timeout_seconds=15
                 )
 
@@ -200,7 +200,7 @@ class Checker(commands.Cog):
                 b64_auth = base64.b64encode(f"{email}:{password}".encode('utf-8')).decode('utf-8')
                 
                 headers = {
-                    "Content-Type": "application/json",
+                    "Content-Type": "application/x-www-form-urlencoded",
                     "Ubi-AppId": UBI_APP_ID,
                     "Authorization": f"Basic {b64_auth}",
                     "Accept": "application/json",
@@ -219,7 +219,7 @@ class Checker(commands.Cog):
                     return session.post(
                         "https://public-ubiservices.ubi.com/v3/profiles/sessions",
                         headers=headers,
-                        json={"rememberMe": True},
+                        data="rememberMe=true",
                         timeout_seconds=15
                     )
 
