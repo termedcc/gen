@@ -6,3 +6,4 @@ openai>=1.0.0
 playwright
 curl_cffi
 tls_client
+requests
