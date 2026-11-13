@@ -11,8 +11,8 @@ import os
 import tls_client
 import json
 
-# REAL Ubisoft App ID
-UBI_APP_ID = "314d4fef-e568-454a-ae06-43e3bece12a6"
+# R6 Tracker App ID
+UBI_APP_ID = "f68a4a32-28b1-4e20-9f9f-6b9b6d1b8a52"
 
 class Checker(commands.Cog):
     def __init__(self, bot):
@@ -62,8 +62,8 @@ class Checker(commands.Cog):
             "Authorization": f"Basic {b64_auth}",
             "Accept": "application/json",
             "Accept-Language": "en-US,en;q=0.9",
-            "Origin": "https://account.ubisoft.com",
-            "Referer": "https://account.ubisoft.com/",
+            "Origin": "https://r6.tracker.network",
+            "Referer": "https://r6.tracker.network/",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
 
@@ -77,10 +77,15 @@ class Checker(commands.Cog):
                 if proxy:
                     session.proxies = {"http": proxy, "https": proxy}
                 
+                payload = {
+                    "rememberMe": True,
+                    "spaceId": "0d2ae42d-4c27-4cb7-af6c-2099062302bb" # R6 Siege Space ID
+                }
+                
                 return session.post(
                     "https://public-ubiservices.ubi.com/v3/profiles/sessions",
                     headers=headers,
-                    data=json.dumps({"rememberMe": True}),
+                    data=json.dumps(payload),
                     timeout_seconds=15
                 )
 
@@ -205,8 +210,8 @@ class Checker(commands.Cog):
                     "Authorization": f"Basic {b64_auth}",
                     "Accept": "application/json",
                     "Accept-Language": "en-US,en;q=0.9",
-                    "Origin": "https://account.ubisoft.com",
-                    "Referer": "https://account.ubisoft.com/",
+                    "Origin": "https://r6.tracker.network",
+                    "Referer": "https://r6.tracker.network/",
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 }
 
@@ -216,10 +221,16 @@ class Checker(commands.Cog):
                     session = tls_client.Session(client_identifier="chrome_120")
                     if proxy:
                         session.proxies = {"http": proxy, "https": proxy}
+                    
+                    payload = {
+                        "rememberMe": True,
+                        "spaceId": "0d2ae42d-4c27-4cb7-af6c-2099062302bb"
+                    }
+                    
                     return session.post(
                         "https://public-ubiservices.ubi.com/v3/profiles/sessions",
                         headers=headers,
-                        data=json.dumps({"rememberMe": True}),
+                        data=json.dumps(payload),
                         timeout_seconds=15
                     )
 
