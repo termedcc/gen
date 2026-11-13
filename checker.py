@@ -9,9 +9,9 @@ import random
 import io
 import os
 import json
-import architect
+import tls_client
 
-# Official Ubisoft App ID used by their own web client
+# Official Ubisoft App ID
 UBI_APP_ID = "86263886-327a-4328-ac69-527f0d20a237"
 
 class Checker(commands.Cog):
@@ -73,14 +73,14 @@ class Checker(commands.Cog):
 
         try:
             def do_request():
-                session = architect.Client(architect.CHROME_124)
+                session = tls_client.Session(client_identifier="chrome_124")
                 if proxy:
-                    session.proxy = proxy
+                    session.proxies = {"http": proxy, "https": proxy}
                 return session.post(
                     "https://public-ubiservices.ubi.com/v3/profiles/sessions",
                     headers=headers,
                     json={"rememberMe": True},
-                    timeout=15
+                    timeout_seconds=15
                 )
 
             response = await asyncio.to_thread(do_request)
@@ -212,14 +212,14 @@ class Checker(commands.Cog):
                 proxy = random.choice(self.proxies) if self.proxies else None
 
                 def do_req():
-                    session = architect.Client(architect.CHROME_124)
+                    session = tls_client.Session(client_identifier="chrome_124")
                     if proxy:
-                        session.proxy = proxy
+                        session.proxies = {"http": proxy, "https": proxy}
                     return session.post(
                         "https://public-ubiservices.ubi.com/v3/profiles/sessions",
                         headers=headers,
                         json={"rememberMe": True},
-                        timeout=15
+                        timeout_seconds=15
                     )
 
                 try:
