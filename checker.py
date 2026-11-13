@@ -59,16 +59,22 @@ class Checker(commands.Cog):
 
         try:
             async with async_playwright() as p:
-                # HEADFUL mode (headless=False) is required to bypass DataDome
                 launch_args = ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
                 launch_kwargs = {"headless": False, "args": launch_args}
                 
                 if proxy:
+                    proxy = proxy.strip()
                     if "@" in proxy:
-                        auth, server = proxy.split("@")
-                        protocol, auth = auth.split("//")
-                        user, pwd = auth.split(":")
-                        launch_kwargs["proxy"] = {"server": f"{protocol}://{server}", "username": user, "password": pwd}
+                        auth_part, server_part = proxy.split("@")
+                        protocol = auth_part.split("://")[0]
+                        user_pass = auth_part.split("://")[1]
+                        user, pwd = user_pass.split(":")
+                        
+                        launch_kwargs["proxy"] = {
+                            "server": f"{protocol}://{server_part}",
+                            "username": user,
+                            "password": pwd
+                        }
                     else:
                         launch_kwargs["proxy"] = {"server": proxy}
 
@@ -78,11 +84,9 @@ class Checker(commands.Cog):
                 )
                 page = await context.new_page()
                 
-                # Navigate to a blank page first, then execute the API call via fetch inside the browser
                 await page.goto("https://account.ubisoft.com/")
-                await page.wait_for_timeout(3000) # Let DataDome settle
+                await page.wait_for_timeout(3000)
 
-                # Execute the login request inside the browser's context
                 b64_auth = base64.b64encode(f"{email}:{password}".encode('utf-8')).decode('utf-8')
                 
                 js_code = f"""
@@ -204,7 +208,7 @@ class Checker(commands.Cog):
         await interaction.followup.send(f"⏳ Checking **{total}** accounts (Playwright mode is slow, this will take a while)...", ephemeral=True)
 
         valid_accounts = []
-        sem = asyncio.Semaphore(5) # Keep concurrency low for Playwright so it doesn't crash
+        sem = asyncio.Semaphore(5) 
         
         async def test_account(acc):
             async with sem:
@@ -221,11 +225,17 @@ class Checker(commands.Cog):
                         launch_kwargs = {"headless": False, "args": launch_args}
                         
                         if proxy:
+                            proxy = proxy.strip()
                             if "@" in proxy:
-                                auth, server = proxy.split("@")
-                                protocol, auth = auth.split("//")
-                                user, pwd = auth.split(":")
-                                launch_kwargs["proxy"] = {"server": f"{protocol}://{server}", "username": user, "password": pwd}
+                                auth_part, server_part = proxy.split("@")
+                                protocol = auth_part.split("://")[0]
+                                user_pass = auth_part.split("://")[1]
+                                user, pwd = user_pass.split(":")
+                                launch_kwargs["proxy"] = {
+                                    "server": f"{protocol}://{server_part}",
+                                    "username": user,
+                                    "password": pwd
+                                }
                             else:
                                 launch_kwargs["proxy"] = {"server": proxy}
 
