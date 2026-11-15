@@ -11,6 +11,7 @@ import asyncio
 import random
 import string
 import os
+import io
 import re
 import database as db
 import utils
